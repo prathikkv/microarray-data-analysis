@@ -1,330 +1,527 @@
-# Analyze biological pathways for CAMK genes - BEGINNER VERSION
-# This script finds what biological processes CAMK genes are involved in
+# Comprehensive Pathway Analysis for Heart Disease Transcriptomics
+# This script performs hierarchical pathway analysis: All DEGs -> Kinases -> CAMK family
 
 library(clusterProfiler)  # Package for pathway analysis
 library(org.Hs.eg.db)     # Human gene database
 library(ggplot2)          # Package for plotting
+library(ReactomePA)       # Reactome pathway analysis
+library(enrichplot)       # Enhanced plotting for enrichment
+library(DOSE)             # Disease ontology analysis
+library(dplyr)            # Data manipulation
 
 # Set up folders
 analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
 plots_folder <- file.path(analysis_results_folder, "condition_specific_analysis")
+dir.create(plots_folder, showWarnings = FALSE)
 
-print("Loading gene expression analysis results...")
+print("Loading differential gene expression results...")
 load(file.path(analysis_results_folder, "03_differential_gene_analysis_results.RData"))
 
-# CAMK genes we want to study
+print("Setting up comprehensive pathway analysis...")
+print("Analysis strategy: Unfiltered DEGs -> Kinase genes -> CAMK family")
+
+# Define gene sets for hierarchical analysis
 important_calcium_genes <- c("CAMK1", "CAMK1D", "CAMK1G", "CAMK2A", "CAMK2B", "CAMK2D", 
                             "CAMK2G", "CAMK4", "CAMKK1", "CAMKK2", "PNCK")
 
-print("Checking which CAMK genes are present in our heart disease data...")
+# Expanded kinase gene list (major kinase families)
+kinase_genes <- c(
+  # CAMK family (our main interest)
+  "CAMK1", "CAMK1D", "CAMK1G", "CAMK2A", "CAMK2B", "CAMK2D", "CAMK2G", "CAMK4", "CAMKK1", "CAMKK2", "PNCK",
+  # Protein kinase A (PKA)
+  "PRKACA", "PRKACB", "PRKAR1A", "PRKAR1B", "PRKAR2A", "PRKAR2B",
+  # Protein kinase C (PKC)  
+  "PRKCA", "PRKCB", "PRKCD", "PRKCE", "PRKCG", "PRKCH", "PRKCI", "PRKCQ", "PRKCZ",
+  # MAP kinases
+  "MAPK1", "MAPK3", "MAPK8", "MAPK9", "MAPK10", "MAPK11", "MAPK12", "MAPK13", "MAPK14",
+  # Cyclin-dependent kinases
+  "CDK1", "CDK2", "CDK4", "CDK6", "CDK7", "CDK8", "CDK9",
+  # Cardiac-relevant kinases
+  "GSK3A", "GSK3B", "AKT1", "AKT2", "AKT3", "ROCK1", "ROCK2", "PIK3CA", "PIK3CB", "PIK3CD"
+)
 
-# Find CAMK genes that are actually measured in our datasets
-camk_genes_in_af_data <- intersect(important_calcium_genes, rownames(atrial_fib_all_gene_results))
-camk_genes_in_hf_data <- intersect(important_calcium_genes, rownames(heart_failure_all_gene_results))
+print("Preparing gene lists for hierarchical analysis...")
 
-print(paste("CAMK genes found in atrial fibrillation data:", length(camk_genes_in_af_data)))
-if(length(camk_genes_in_af_data) > 0) {
-  print(paste("  Genes:", paste(camk_genes_in_af_data, collapse = ", ")))
-}
-
-print(paste("CAMK genes found in heart failure data:", length(camk_genes_in_hf_data)))
-if(length(camk_genes_in_hf_data) > 0) {
-  print(paste("  Genes:", paste(camk_genes_in_hf_data, collapse = ", ")))
-}
-
-# Combine all CAMK genes found in either dataset
-all_camk_genes_found <- unique(c(camk_genes_in_af_data, camk_genes_in_hf_data))
-print(paste("Total unique CAMK genes in our data:", length(all_camk_genes_found)))
-
-# Convert gene symbols to Entrez IDs (required for pathway analysis)
-print("Converting gene names to database IDs for pathway analysis...")
-
-camk_gene_id_conversion <- bitr(all_camk_genes_found, 
-                               fromType = "SYMBOL", 
-                               toType = "ENTREZID", 
-                               OrgDb = org.Hs.eg.db)
-
-print("CAMK genes with database IDs:")
-print(camk_gene_id_conversion)
-
-if(nrow(camk_gene_id_conversion) == 0) {
-  print("ERROR: No CAMK genes could be converted to database IDs")
-  stop("Cannot proceed with pathway analysis")
-}
-
-print("Analyzing biological pathways that involve CAMK genes...")
-
-# Analyze KEGG pathways (well-known biological pathways database)
-camk_pathway_analysis <- enrichKEGG(gene = camk_gene_id_conversion$ENTREZID,
-                                   organism = 'hsa',  # Human
-                                   pAdjustMethod = "BH",  # Multiple testing correction
-                                   pvalueCutoff = 1.0,    # Show all results initially
-                                   qvalueCutoff = 1.0)
-
-# Check if we found any pathways
-if(is.null(camk_pathway_analysis) || nrow(camk_pathway_analysis@result) == 0) {
-  print("No significant pathways found for CAMK genes")
-  print("This is expected since we only have a small number of CAMK genes")
+# Function to prepare gene lists for pathway analysis
+prepare_gene_lists_for_pathway_analysis <- function(deg_results, condition_name, significance_levels) {
   
-  # Create a summary anyway
-  camk_pathway_summary <- data.frame(
-    analysis_type = "KEGG_pathways",
-    total_camk_genes_analyzed = length(all_camk_genes_found),
-    camk_genes_with_database_ids = nrow(camk_gene_id_conversion),
-    pathways_found = 0,
-    significant_pathways = 0,
-    top_pathway = "None found",
-    top_pathway_pvalue = NA,
-    notes = "Small gene set - limited pathway enrichment expected"
-  )
+  print(paste("Processing", condition_name, "differential expression results..."))
   
+  # Convert gene symbols to Entrez IDs
+  all_genes_with_ids <- bitr(rownames(deg_results), 
+                            fromType = "SYMBOL", 
+                            toType = "ENTREZID", 
+                            OrgDb = org.Hs.eg.db)
+  
+  # Merge with DEG results
+  deg_with_ids <- merge(deg_results, all_genes_with_ids, by.x = "row.names", by.y = "SYMBOL")
+  names(deg_with_ids)[1] <- "SYMBOL"
+  
+  gene_lists <- list()
+  
+  # Create ranked gene list for GSEA (all genes)
+  gsea_genes <- deg_with_ids$logFC
+  names(gsea_genes) <- deg_with_ids$ENTREZID
+  gsea_genes <- sort(gsea_genes, decreasing = TRUE)
+  gene_lists$gsea_ranked <- gsea_genes
+  
+  # Create different significance-based gene sets
+  for(level in names(significance_levels)) {
+    criteria <- significance_levels[[level]]
+    
+    significant_genes <- deg_with_ids[
+      deg_with_ids$adj.P.Val <= criteria$p_cutoff & 
+      abs(deg_with_ids$logFC) >= criteria$fold_cutoff, 
+    ]
+    
+    if(nrow(significant_genes) > 0) {
+      gene_lists[[paste0("significant_", level)]] <- significant_genes$ENTREZID
+    }
+  }
+  
+  # Filter for kinase genes
+  kinase_in_data <- intersect(kinase_genes, deg_with_ids$SYMBOL)
+  if(length(kinase_in_data) > 0) {
+    kinase_deg_data <- deg_with_ids[deg_with_ids$SYMBOL %in% kinase_in_data, ]
+    gene_lists$all_kinases <- kinase_deg_data$ENTREZID
+    
+    # Significant kinases
+    sig_kinases <- kinase_deg_data[
+      kinase_deg_data$adj.P.Val <= 0.20 & abs(kinase_deg_data$logFC) >= 0.1, 
+    ]
+    if(nrow(sig_kinases) > 0) {
+      gene_lists$significant_kinases <- sig_kinases$ENTREZID
+    }
+  }
+  
+  # Filter for CAMK genes
+  camk_in_data <- intersect(important_calcium_genes, deg_with_ids$SYMBOL)
+  if(length(camk_in_data) > 0) {
+    camk_deg_data <- deg_with_ids[deg_with_ids$SYMBOL %in% camk_in_data, ]
+    gene_lists$camk_genes <- camk_deg_data$ENTREZID
+  }
+  
+  return(list(
+    gene_lists = gene_lists,
+    deg_with_ids = deg_with_ids,
+    kinase_genes_found = kinase_in_data,
+    camk_genes_found = camk_in_data
+  ))
+}
+
+# Define significance levels for analysis
+significance_levels <- list(
+  "lenient" = list(p_cutoff = 0.20, fold_cutoff = 0.1),
+  "default" = list(p_cutoff = 0.05, fold_cutoff = 0.5),
+  "no_filter" = list(p_cutoff = 1.0, fold_cutoff = 0.0)
+)
+
+# Function to perform comprehensive pathway enrichment analysis
+perform_pathway_enrichment <- function(gene_list, analysis_name, condition_name) {
+  
+  if(length(gene_list) == 0) {
+    print(paste("No genes provided for", analysis_name, "- skipping"))
+    return(NULL)
+  }
+  
+  print(paste("Running pathway enrichment for", analysis_name, "in", condition_name, "( n =", length(gene_list), "genes )"))
+  
+  results <- list()
+  
+  # GO Biological Process
+  try({
+    go_bp <- enrichGO(gene = gene_list,
+                      OrgDb = org.Hs.eg.db,
+                      ont = "BP",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff = 0.05,
+                      qvalueCutoff = 0.20,
+                      readable = TRUE)
+    if(!is.null(go_bp) && nrow(go_bp@result) > 0) {
+      results$GO_BP <- go_bp
+    }
+  }, silent = TRUE)
+  
+  # GO Molecular Function
+  try({
+    go_mf <- enrichGO(gene = gene_list,
+                      OrgDb = org.Hs.eg.db,
+                      ont = "MF",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff = 0.05,
+                      qvalueCutoff = 0.20,
+                      readable = TRUE)
+    if(!is.null(go_mf) && nrow(go_mf@result) > 0) {
+      results$GO_MF <- go_mf
+    }
+  }, silent = TRUE)
+  
+  # KEGG Pathways
+  try({
+    kegg <- enrichKEGG(gene = gene_list,
+                       organism = 'hsa',
+                       pAdjustMethod = "BH",
+                       pvalueCutoff = 0.05,
+                       qvalueCutoff = 0.20)
+    if(!is.null(kegg) && nrow(kegg@result) > 0) {
+      results$KEGG <- kegg
+    }
+  }, silent = TRUE)
+  
+  # Reactome Pathways
+  try({
+    reactome <- enrichPathway(gene = gene_list,
+                             pAdjustMethod = "BH",
+                             pvalueCutoff = 0.05,
+                             qvalueCutoff = 0.20,
+                             readable = TRUE)
+    if(!is.null(reactome) && nrow(reactome@result) > 0) {
+      results$Reactome <- reactome
+    }
+  }, silent = TRUE)
+  
+  return(results)
+}
+
+# Function to perform GSEA
+perform_gsea_analysis <- function(ranked_genes, condition_name) {
+  
+  print(paste("Running GSEA for", condition_name, "with", length(ranked_genes), "ranked genes"))
+  
+  results <- list()
+  
+  # GSEA GO Biological Process
+  try({
+    gsea_go <- gseGO(geneList = ranked_genes,
+                     OrgDb = org.Hs.eg.db,
+                     ont = "BP",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff = 0.05,
+                     verbose = FALSE)
+    if(!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
+      results$GSEA_GO <- gsea_go
+    }
+  }, silent = TRUE)
+  
+  # GSEA KEGG
+  try({
+    gsea_kegg <- gseKEGG(geneList = ranked_genes,
+                         organism = 'hsa',
+                         pAdjustMethod = "BH",
+                         pvalueCutoff = 0.05,
+                         verbose = FALSE)
+    if(!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
+      results$GSEA_KEGG <- gsea_kegg
+    }
+  }, silent = TRUE)
+  
+  return(results)
+}
+
+# ======= MAIN ANALYSIS EXECUTION =======
+
+print("=== PROCESSING ATRIAL FIBRILLATION (AF vs Control) ===")
+af_processed <- prepare_gene_lists_for_pathway_analysis(atrial_fib_all_gene_results, "AF", significance_levels)
+
+print("=== PROCESSING HEART FAILURE (HF vs Control) ===") 
+hf_processed <- prepare_gene_lists_for_pathway_analysis(heart_failure_all_gene_results, "HF", significance_levels)
+
+# Store all results
+all_pathway_results <- list()
+all_gsea_results <- list()
+
+print("=== RUNNING COMPREHENSIVE PATHWAY ANALYSIS ===")
+
+# Analyze AF condition
+print("ANALYZING AF PATHWAYS...")
+for(gene_set_name in names(af_processed$gene_lists)) {
+  
+  if(gene_set_name == "gsea_ranked") {
+    # GSEA analysis
+    gsea_result <- perform_gsea_analysis(af_processed$gene_lists[[gene_set_name]], "AF")
+    if(length(gsea_result) > 0) {
+      all_gsea_results[paste0("AF_", gene_set_name)] <- list(gsea_result)
+    }
+  } else {
+    # Regular enrichment analysis
+    enrichment_result <- perform_pathway_enrichment(
+      af_processed$gene_lists[[gene_set_name]], 
+      gene_set_name, 
+      "AF"
+    )
+    if(!is.null(enrichment_result) && length(enrichment_result) > 0) {
+      all_pathway_results[paste0("AF_", gene_set_name)] <- list(enrichment_result)
+    }
+  }
+}
+
+# Analyze HF condition  
+print("ANALYZING HF PATHWAYS...")
+for(gene_set_name in names(hf_processed$gene_lists)) {
+  
+  if(gene_set_name == "gsea_ranked") {
+    # GSEA analysis
+    gsea_result <- perform_gsea_analysis(hf_processed$gene_lists[[gene_set_name]], "HF")
+    if(length(gsea_result) > 0) {
+      all_gsea_results[paste0("HF_", gene_set_name)] <- list(gsea_result)
+    }
+  } else {
+    # Regular enrichment analysis
+    enrichment_result <- perform_pathway_enrichment(
+      hf_processed$gene_lists[[gene_set_name]], 
+      gene_set_name, 
+      "HF"
+    )
+    if(!is.null(enrichment_result) && length(enrichment_result) > 0) {
+      all_pathway_results[paste0("HF_", gene_set_name)] <- list(enrichment_result)
+    }
+  }
+}
+
+print("=== GENERATING COMPREHENSIVE SUMMARY ===")
+
+# Function to summarize pathway results
+summarize_pathway_results <- function(results_list, analysis_type) {
+  
+  summary_data <- data.frame()
+  
+  for(analysis_name in names(results_list)) {
+    result_set <- results_list[[analysis_name]]
+    
+    for(db_name in names(result_set)) {
+      db_result <- result_set[[db_name]]
+      
+      if(!is.null(db_result) && nrow(db_result@result) > 0) {
+        significant_count <- sum(db_result@result$p.adjust < 0.05)
+        
+        summary_row <- data.frame(
+          analysis_name = analysis_name,
+          database = db_name,
+          analysis_type = analysis_type,
+          total_terms = nrow(db_result@result),
+          significant_terms = significant_count,
+          top_term = if(nrow(db_result@result) > 0) db_result@result$Description[1] else "None",
+          top_pvalue = if(nrow(db_result@result) > 0) db_result@result$pvalue[1] else NA,
+          top_qvalue = if(nrow(db_result@result) > 0) db_result@result$p.adjust[1] else NA,
+          stringsAsFactors = FALSE
+        )
+        
+        summary_data <- rbind(summary_data, summary_row)
+      }
+    }
+  }
+  
+  return(summary_data)
+}
+
+# Create comprehensive summaries
+enrichment_summary <- summarize_pathway_results(all_pathway_results, "Enrichment")
+gsea_summary <- summarize_pathway_results(all_gsea_results, "GSEA")
+complete_analysis_summary <- rbind(enrichment_summary, gsea_summary)
+
+# Create gene-level summaries
+print("Creating comprehensive gene summaries...")
+
+# Kinase genes summary
+af_kinase_summary <- data.frame()
+hf_kinase_summary <- data.frame()
+
+if(length(af_processed$kinase_genes_found) > 0) {
+  for(gene in af_processed$kinase_genes_found) {
+    if(gene %in% rownames(atrial_fib_all_gene_results)) {
+      gene_data <- atrial_fib_all_gene_results[gene, ]
+      summary_row <- data.frame(
+        gene = gene,
+        condition = "AF",
+        gene_family = ifelse(gene %in% important_calcium_genes, "CAMK", "Other_Kinase"),
+        fold_change = gene_data$logFC,
+        p_value = gene_data$P.Value,
+        adj_p_value = gene_data$adj.P.Val,
+        avg_expression = gene_data$AveExpr,
+        is_significant_default = (gene_data$adj.P.Val < 0.05) & (abs(gene_data$logFC) > 0.5),
+        is_significant_lenient = (gene_data$adj.P.Val < 0.20) & (abs(gene_data$logFC) > 0.1),
+        stringsAsFactors = FALSE
+      )
+      af_kinase_summary <- rbind(af_kinase_summary, summary_row)
+    }
+  }
+}
+
+if(length(hf_processed$kinase_genes_found) > 0) {
+  for(gene in hf_processed$kinase_genes_found) {
+    if(gene %in% rownames(heart_failure_all_gene_results)) {
+      gene_data <- heart_failure_all_gene_results[gene, ]
+      summary_row <- data.frame(
+        gene = gene,
+        condition = "HF",
+        gene_family = ifelse(gene %in% important_calcium_genes, "CAMK", "Other_Kinase"),
+        fold_change = gene_data$logFC,
+        p_value = gene_data$P.Value,
+        adj_p_value = gene_data$adj.P.Val,
+        avg_expression = gene_data$AveExpr,
+        is_significant_default = (gene_data$adj.P.Val < 0.05) & (abs(gene_data$logFC) > 0.5),
+        is_significant_lenient = (gene_data$adj.P.Val < 0.20) & (abs(gene_data$logFC) > 0.1),
+        stringsAsFactors = FALSE
+      )
+      hf_kinase_summary <- rbind(hf_kinase_summary, summary_row)
+    }
+  }
+}
+
+all_kinase_summary <- rbind(af_kinase_summary, hf_kinase_summary)
+
+# Analysis overview summary
+analysis_overview <- data.frame(
+  condition = c("AF", "HF"),
+  total_genes_analyzed = c(nrow(atrial_fib_all_gene_results), nrow(heart_failure_all_gene_results)),
+  kinase_genes_found = c(length(af_processed$kinase_genes_found), length(hf_processed$kinase_genes_found)),
+  camk_genes_found = c(length(af_processed$camk_genes_found), length(hf_processed$camk_genes_found)),
+  significant_genes_default = c(
+    nrow(atrial_fib_all_gene_results[atrial_fib_all_gene_results$adj.P.Val < 0.05 & abs(atrial_fib_all_gene_results$logFC) > 0.5, ]),
+    nrow(heart_failure_all_gene_results[heart_failure_all_gene_results$adj.P.Val < 0.05 & abs(heart_failure_all_gene_results$logFC) > 0.5, ])
+  ),
+  significant_genes_lenient = c(
+    nrow(atrial_fib_all_gene_results[atrial_fib_all_gene_results$adj.P.Val < 0.20 & abs(atrial_fib_all_gene_results$logFC) > 0.1, ]),
+    nrow(heart_failure_all_gene_results[heart_failure_all_gene_results$adj.P.Val < 0.20 & abs(heart_failure_all_gene_results$logFC) > 0.1, ])
+  ),
+  stringsAsFactors = FALSE
+)
+
+print("=== SAVING COMPREHENSIVE RESULTS ===")
+
+# Save pathway analysis results to CSV files
+if(nrow(complete_analysis_summary) > 0) {
+  write.csv(complete_analysis_summary,
+            file.path(analysis_results_folder, "05_comprehensive_pathway_analysis_summary.csv"),
+            row.names = FALSE)
+}
+
+# Save gene summaries
+write.csv(analysis_overview,
+          file.path(analysis_results_folder, "05_analysis_overview.csv"),
+          row.names = FALSE)
+
+if(nrow(all_kinase_summary) > 0) {
+  write.csv(all_kinase_summary,
+            file.path(analysis_results_folder, "05_kinase_genes_expression_summary.csv"),
+            row.names = FALSE)
+}
+
+# Save detailed pathway results
+save_detailed_pathway_results <- function(results_list, prefix) {
+  for(analysis_name in names(results_list)) {
+    result_set <- results_list[[analysis_name]]
+    
+    for(db_name in names(result_set)) {
+      db_result <- result_set[[db_name]]
+      
+      if(!is.null(db_result) && nrow(db_result@result) > 0) {
+        filename <- paste0("05_", prefix, "_", analysis_name, "_", db_name, "_detailed.csv")
+        write.csv(db_result@result, 
+                  file.path(analysis_results_folder, filename),
+                  row.names = FALSE)
+      }
+    }
+  }
+}
+
+# Save all detailed results
+save_detailed_pathway_results(all_pathway_results, "enrichment")
+save_detailed_pathway_results(all_gsea_results, "gsea")
+
+# Save complete analysis objects
+save(all_pathway_results, all_gsea_results, complete_analysis_summary, 
+     analysis_overview, all_kinase_summary, af_processed, hf_processed,
+     file = file.path(analysis_results_folder, "05_comprehensive_pathway_analysis_results.RData"))
+
+print("=== COMPREHENSIVE PATHWAY ANALYSIS COMPLETE! ===")
+print("")
+
+# Display comprehensive summary
+print("ANALYSIS OVERVIEW:")
+for(i in 1:nrow(analysis_overview)) {
+  condition_info <- analysis_overview[i, ]
+  print(paste("", condition_info$condition, "condition:"))
+  print(paste("  Total genes analyzed:", condition_info$total_genes_analyzed))
+  print(paste("  Kinase genes found:", condition_info$kinase_genes_found))
+  print(paste("  CAMK genes found:", condition_info$camk_genes_found))
+  print(paste("  Significant genes (default):", condition_info$significant_genes_default))
+  print(paste("  Significant genes (lenient):", condition_info$significant_genes_lenient))
+  print("")
+}
+
+print("PATHWAY ENRICHMENT RESULTS:")
+if(nrow(complete_analysis_summary) > 0) {
+  # Group by condition and show summary
+  af_results <- complete_analysis_summary[grep("AF_", complete_analysis_summary$analysis_name), ]
+  hf_results <- complete_analysis_summary[grep("HF_", complete_analysis_summary$analysis_name), ]
+  
+  if(nrow(af_results) > 0) {
+    print("  AF (Atrial Fibrillation) Results:")
+    for(i in 1:nrow(af_results)) {
+      result_info <- af_results[i, ]
+      print(paste("   ", result_info$analysis_name, "-", result_info$database, ":", 
+                  result_info$significant_terms, "significant /", result_info$total_terms, "total terms"))
+    }
+    print("")
+  }
+  
+  if(nrow(hf_results) > 0) {
+    print("  HF (Heart Failure) Results:")
+    for(i in 1:nrow(hf_results)) {
+      result_info <- hf_results[i, ]
+      print(paste("   ", result_info$analysis_name, "-", result_info$database, ":", 
+                  result_info$significant_terms, "significant /", result_info$total_terms, "total terms"))
+    }
+    print("")
+  }
 } else {
-  
-  # We found some pathways!
-  pathway_results <- camk_pathway_analysis@result
-  
-  print(paste("Total pathways involving CAMK genes:", nrow(pathway_results)))
+  print("  No significant pathway enrichments found")
+  print("  This may be expected for focused gene sets")
+  print("")
+}
+
+print("KINASE GENES EXPRESSION:")
+if(nrow(all_kinase_summary) > 0) {
+  # Show significant kinase genes
+  significant_kinases <- all_kinase_summary[all_kinase_summary$is_significant_lenient, ]
+  if(nrow(significant_kinases) > 0) {
+    print("  Significantly changed kinase genes (lenient threshold):")
+    for(i in 1:nrow(significant_kinases)) {
+      gene_info <- significant_kinases[i, ]
+      direction <- if(gene_info$fold_change > 0) "upregulated" else "downregulated"
+      print(paste("   ", gene_info$gene, "(", gene_info$gene_family, ") in", gene_info$condition, ":", 
+                  direction, "by", round(abs(gene_info$fold_change), 2), "fold"))
+    }
+  } else {
+    print("  No kinase genes significantly changed at lenient threshold")
+  }
   print("")
   
-  # Show top pathways
-  significant_pathways <- pathway_results[pathway_results$p.adjust < 0.05, ]
-  
-  if(nrow(significant_pathways) > 0) {
-    print(paste("Statistically significant pathways (p < 0.05):", nrow(significant_pathways)))
-    print("")
-    print("Top significant pathways:")
-    top_significant <- head(significant_pathways, 10)
-    for(i in 1:nrow(top_significant)) {
-      pathway_info <- top_significant[i, ]
-      print(paste("", i, ".", pathway_info$Description))
-      print(paste("     P-value:", format(pathway_info$pvalue, scientific = TRUE)))
-      print(paste("     Adjusted p-value:", format(pathway_info$p.adjust, scientific = TRUE)))
-      print(paste("     CAMK genes involved:", pathway_info$Count, "out of", pathway_info$BgRatio))
-      print("")
-    }
-  } else {
-    print("No statistically significant pathways found (p < 0.05)")
-    print("Showing top pathways regardless of significance:")
-    top_pathways <- head(pathway_results, 10)
-    for(i in 1:nrow(top_pathways)) {
-      pathway_info <- top_pathways[i, ]
-      print(paste("", i, ".", pathway_info$Description))
-      print(paste("     P-value:", format(pathway_info$pvalue, scientific = TRUE)))
-      print(paste("     Adjusted p-value:", format(pathway_info$p.adjust, scientific = TRUE)))
-      print(paste("     CAMK genes involved:", pathway_info$Count))
-      print("")
+  # Show CAMK-specific results
+  camk_specific <- all_kinase_summary[all_kinase_summary$gene_family == "CAMK", ]
+  if(nrow(camk_specific) > 0) {
+    print("  CAMK family gene expression:")
+    for(i in 1:nrow(camk_specific)) {
+      gene_info <- camk_specific[i, ]
+      significance <- ifelse(gene_info$is_significant_lenient, "significant", "not significant")
+      print(paste("   ", gene_info$gene, "in", gene_info$condition, ":", 
+                  round(gene_info$fold_change, 3), "fold change,", significance))
     }
   }
-  
-  # Create summary
-  camk_pathway_summary <- data.frame(
-    analysis_type = "KEGG_pathways",
-    total_camk_genes_analyzed = length(all_camk_genes_found),
-    camk_genes_with_database_ids = nrow(camk_gene_id_conversion),
-    pathways_found = nrow(pathway_results),
-    significant_pathways = nrow(significant_pathways),
-    top_pathway = pathway_results$Description[1],
-    top_pathway_pvalue = pathway_results$pvalue[1],
-    notes = if(nrow(significant_pathways) > 0) "Significant pathways found" else "No significant pathways"
-  )
-  
-  # Save detailed results
-  write.csv(pathway_results, 
-            file.path(analysis_results_folder, "05_CAMK_KEGG_pathways_detailed.csv"), 
-            row.names = FALSE)
-  
+  print("")
 }
 
-print("Analyzing Gene Ontology (GO) biological processes...")
-
-# Analyze GO Biological Process terms
-camk_go_analysis <- enrichGO(gene = camk_gene_id_conversion$ENTREZID,
-                            OrgDb = org.Hs.eg.db,
-                            ont = "BP",  # Biological Process
-                            pAdjustMethod = "BH",
-                            pvalueCutoff = 1.0,
-                            qvalueCutoff = 1.0,
-                            readable = TRUE)
-
-# Check GO results
-if(is.null(camk_go_analysis) || nrow(camk_go_analysis@result) == 0) {
-  print("No GO biological processes found for CAMK genes")
-  
-  go_summary <- data.frame(
-    analysis_type = "GO_biological_process",
-    total_camk_genes_analyzed = length(all_camk_genes_found),
-    camk_genes_with_database_ids = nrow(camk_gene_id_conversion),
-    processes_found = 0,
-    significant_processes = 0,
-    top_process = "None found",
-    top_process_pvalue = NA,
-    notes = "Small gene set - limited GO enrichment expected"
-  )
-  
-} else {
-  
-  go_results <- camk_go_analysis@result
-  
-  print(paste("Total GO biological processes involving CAMK genes:", nrow(go_results)))
-  
-  # Show top GO processes
-  significant_go <- go_results[go_results$p.adjust < 0.05, ]
-  
-  if(nrow(significant_go) > 0) {
-    print(paste("Significant GO processes (p < 0.05):", nrow(significant_go)))
-    print("")
-    print("Top significant GO biological processes:")
-    top_go <- head(significant_go, 5)
-    for(i in 1:nrow(top_go)) {
-      go_info <- top_go[i, ]
-      print(paste("", i, ".", go_info$Description))
-      print(paste("     P-value:", format(go_info$pvalue, scientific = TRUE)))
-      print(paste("     Genes:", go_info$geneID))
-      print("")
-    }
-  } else {
-    print("No statistically significant GO processes found")
-    print("Top GO processes (regardless of significance):")
-    top_go <- head(go_results, 5)
-    for(i in 1:nrow(top_go)) {
-      go_info <- top_go[i, ]
-      print(paste("", i, ".", go_info$Description))
-      print(paste("     P-value:", format(go_info$pvalue, scientific = TRUE)))
-      print(paste("     Genes:", go_info$geneID))
-      print("")
-    }
-  }
-  
-  go_summary <- data.frame(
-    analysis_type = "GO_biological_process", 
-    total_camk_genes_analyzed = length(all_camk_genes_found),
-    camk_genes_with_database_ids = nrow(camk_gene_id_conversion),
-    processes_found = nrow(go_results),
-    significant_processes = nrow(significant_go),
-    top_process = go_results$Description[1],
-    top_process_pvalue = go_results$pvalue[1],
-    notes = if(nrow(significant_go) > 0) "Significant processes found" else "No significant processes"
-  )
-  
-  # Save GO results
-  write.csv(go_results,
-            file.path(analysis_results_folder, "05_CAMK_GO_biological_processes.csv"),
-            row.names = FALSE)
-  
-}
-
-print("Creating CAMK gene expression summary...")
-
-# Summarize CAMK gene expression patterns
-camk_expression_summary <- data.frame()
-
-for(camk_gene in all_camk_genes_found) {
-  
-  # Get AF data if available
-  if(camk_gene %in% rownames(atrial_fib_all_gene_results)) {
-    af_data <- atrial_fib_all_gene_results[camk_gene, ]
-    af_row <- data.frame(
-      gene_name = camk_gene,
-      condition = "AF",
-      fold_change = af_data$logFC,
-      p_value = af_data$P.Value,
-      adjusted_p_value = af_data$adj.P.Val,
-      average_expression = af_data$AveExpr,
-      is_significant_default = (af_data$adj.P.Val < 0.05) & (abs(af_data$logFC) > 0.5),
-      stringsAsFactors = FALSE
-    )
-    camk_expression_summary <- rbind(camk_expression_summary, af_row)
-  }
-  
-  # Get HF data if available
-  if(camk_gene %in% rownames(heart_failure_all_gene_results)) {
-    hf_data <- heart_failure_all_gene_results[camk_gene, ]
-    hf_row <- data.frame(
-      gene_name = camk_gene,
-      condition = "HF",
-      fold_change = hf_data$logFC,
-      p_value = hf_data$P.Value,
-      adjusted_p_value = hf_data$adj.P.Val,
-      average_expression = hf_data$AveExpr,
-      is_significant_default = (hf_data$adj.P.Val < 0.05) & (abs(hf_data$logFC) > 0.5),
-      stringsAsFactors = FALSE
-    )
-    camk_expression_summary <- rbind(camk_expression_summary, hf_row)
-  }
-}
-
-print("Saving pathway analysis results...")
-
-# Combine analysis summaries
-complete_pathway_summary <- rbind(camk_pathway_summary, go_summary)
-
-# Save all results
-write.csv(complete_pathway_summary,
-          file.path(analysis_results_folder, "05_pathway_analysis_summary.csv"),
-          row.names = FALSE)
-
-write.csv(camk_expression_summary,
-          file.path(analysis_results_folder, "05_CAMK_expression_patterns_summary.csv"),
-          row.names = FALSE)
-
-write.csv(camk_gene_id_conversion,
-          file.path(analysis_results_folder, "05_CAMK_gene_ID_conversions.csv"),
-          row.names = FALSE)
-
-# Save complete analysis
-save(camk_pathway_analysis, camk_go_analysis, camk_expression_summary, complete_pathway_summary,
-     file = file.path(analysis_results_folder, "05_complete_pathway_analysis_results.RData"))
-
-print("Pathway analysis complete!")
-print("")
-print("=== FINAL CAMK PATHWAY ANALYSIS SUMMARY ===")
-print("")
-print("CAMK Genes Analyzed:")
-print(paste("  Total CAMK genes in data:", length(all_camk_genes_found)))
-print(paste("  Genes:", paste(all_camk_genes_found, collapse = ", ")))
+print("FILES CREATED:")
+print("- 05_comprehensive_pathway_analysis_summary.csv: Overall pathway analysis results")
+print("- 05_analysis_overview.csv: High-level analysis statistics") 
+print("- 05_kinase_genes_expression_summary.csv: Detailed kinase gene expression")
+print("- Multiple detailed CSV files for each enrichment analysis")
+print("- 05_comprehensive_pathway_analysis_results.RData: Complete analysis objects")
 print("")
 
-print("KEGG Pathway Analysis:")
-kegg_summary <- complete_pathway_summary[complete_pathway_summary$analysis_type == "KEGG_pathways", ]
-print(paste("  Pathways found:", kegg_summary$pathways_found))
-print(paste("  Significant pathways:", kegg_summary$significant_pathways))
-if(!is.na(kegg_summary$top_pathway_pvalue)) {
-  print(paste("  Top pathway:", kegg_summary$top_pathway))
-  print(paste("  Top pathway p-value:", format(kegg_summary$top_pathway_pvalue, scientific = TRUE)))
-}
+print("SUCCESS: Comprehensive hierarchical pathway analysis complete!")
+print("Analysis pipeline: Unfiltered DEGs -> Kinase genes -> CAMK family")
+print("Methods used: GO, KEGG, GSEA, Reactome for both AF and HF conditions")
 print("")
-
-print("GO Biological Process Analysis:")
-go_summary_final <- complete_pathway_summary[complete_pathway_summary$analysis_type == "GO_biological_process", ]
-print(paste("  Processes found:", go_summary_final$processes_found))
-print(paste("  Significant processes:", go_summary_final$significant_processes))
-if(!is.na(go_summary_final$top_process_pvalue)) {
-  print(paste("  Top process:", go_summary_final$top_process))
-  print(paste("  Top process p-value:", format(go_summary_final$top_process_pvalue, scientific = TRUE)))
-}
-print("")
-
-print("CAMK Gene Expression in Heart Disease:")
-significant_camk <- camk_expression_summary[camk_expression_summary$is_significant_default, ]
-if(nrow(significant_camk) > 0) {
-  print("  Significantly changed CAMK genes:")
-  for(i in 1:nrow(significant_camk)) {
-    gene_info <- significant_camk[i, ]
-    direction <- if(gene_info$fold_change > 0) "increased" else "decreased"
-    print(paste("   ", gene_info$gene_name, "in", gene_info$condition, ":", direction, 
-                "by", round(abs(gene_info$fold_change), 2), "fold (p =", 
-                format(gene_info$adjusted_p_value, scientific = TRUE), ")"))
-  }
-} else {
-  print("  No CAMK genes significantly changed at default thresholds")
-}
-print("")
-
-print("Files created:")
-print("- Detailed KEGG pathway results (if any found)")
-print("- GO biological process results (if any found)")
-print("- CAMK gene expression pattern summary")
-print("- Complete pathway analysis summary")
-print("- All results saved for further investigation")
-print("")
-print("ANALYSIS PIPELINE COMPLETE!")
+print("=== ANALYSIS PIPELINE COMPLETE! ===")

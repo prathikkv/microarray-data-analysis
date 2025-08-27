@@ -53,11 +53,11 @@ heart_failure_all_gene_results <- topTable(heart_failure_final_model, coef = "HF
 
 print("Testing different significance thresholds...")
 
-# Define different levels of strictness for finding significant genes
+# Define 3 levels of filtering criteria for finding significant genes
 significance_thresholds <- data.frame(
-  threshold_name = c("very_strict", "strict", "moderate", "lenient"),
-  adjusted_p_value_cutoff = c(0.01, 0.05, 0.10, 0.20),
-  fold_change_cutoff = c(1.0, 0.5, 0.25, 0.1),
+  threshold_name = c("default", "lenient", "no_filtering"),
+  adjusted_p_value_cutoff = c(0.05, 0.20, 1.0),
+  fold_change_cutoff = c(0.5, 0.1, 0.0),
   stringsAsFactors = FALSE
 )
 

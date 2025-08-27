@@ -428,17 +428,33 @@ gene_coverage_summary <- data.frame(
 probe_gene_mapping_summary$Section <- "Probe_Gene_Mapping"
 important_genes_status$Section <- "Important_Cardiac_Genes"
 
-write.csv(rbind(
-  gene_coverage_summary,
-  data.frame(Section = probe_gene_mapping_summary$Section, 
-             Metric = probe_gene_mapping_summary$Mapping_Type,
-             Count = probe_gene_mapping_summary$Count,
-             Average_Probes_Per_Gene = probe_gene_mapping_summary$Average_Probes_Per_Gene),
-  data.frame(Section = important_genes_status$Section,
-             Metric = important_genes_status$Gene,
-             Count = as.numeric(important_genes_status$Found_in_Final_Dataset),
-             Total_Datasets_Present = rowSums(important_genes_status[,3:6]))
-), file = file.path(analysis_results_folder, "01_gene_mapping_details.csv"), row.names = FALSE)
+# Ensure all data frames have consistent column structure
+gene_mapping_data_1 <- data.frame(
+  Section = gene_coverage_summary$Section,
+  Metric = gene_coverage_summary$Metric,
+  Count = gene_coverage_summary$Count,
+  Additional_Info = "",
+  stringsAsFactors = FALSE
+)
+
+gene_mapping_data_2 <- data.frame(
+  Section = probe_gene_mapping_summary$Section, 
+  Metric = probe_gene_mapping_summary$Mapping_Type,
+  Count = probe_gene_mapping_summary$Count,
+  Additional_Info = paste("Avg_per_gene:", probe_gene_mapping_summary$Average_Probes_Per_Gene),
+  stringsAsFactors = FALSE
+)
+
+gene_mapping_data_3 <- data.frame(
+  Section = important_genes_status$Section,
+  Metric = important_genes_status$Gene,
+  Count = as.numeric(important_genes_status$Found_in_Final_Dataset),
+  Additional_Info = paste("Datasets:", rowSums(important_genes_status[,3:6])),
+  stringsAsFactors = FALSE
+)
+
+write.csv(rbind(gene_mapping_data_1, gene_mapping_data_2, gene_mapping_data_3), 
+          file = file.path(analysis_results_folder, "01_gene_mapping_details.csv"), row.names = FALSE)
 
 # CSV 3: Data Integration Metrics
 sample_summary <- data.frame(
