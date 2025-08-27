@@ -46,7 +46,23 @@ probe_to_gene_lookup_table <- AnnotationDbi::select(hgu133plus2.db, keys = all_p
 # Keep only probes that actually have known gene names
 good_probe_to_gene_mappings <- probe_to_gene_lookup_table[!is.na(probe_to_gene_lookup_table$SYMBOL) & probe_to_gene_lookup_table$SYMBOL != "", ]
 
+# Initialize detailed tracking data structures
+probe_annotation_summary <- data.frame()
+gene_mapping_details <- data.frame()
+data_integration_metrics <- list()
+
+# Track HGU133Plus2 chip annotation details
+hgu133_total_probes_in_annotation <- length(all_probe_ids_on_chip)
+hgu133_probes_with_genes <- nrow(good_probe_to_gene_mappings)
+hgu133_probes_without_genes <- nrow(probe_to_gene_lookup_table) - hgu133_probes_with_genes
+hgu133_mapping_efficiency <- round(hgu133_probes_with_genes / hgu133_total_probes_in_annotation * 100, 2)
+
 print("Converting Dataset 1 (Atrial Fibrillation) probes to genes...")
+# Track dataset-specific probe statistics
+dataset_1_total_probes <- nrow(atrial_fib_1_expression_data)
+dataset_1_mapped_probes <- sum(rownames(atrial_fib_1_expression_data) %in% good_probe_to_gene_mappings$PROBEID)
+dataset_1_unmapped_probes <- dataset_1_total_probes - dataset_1_mapped_probes
+
 # Use efficient method: for each gene, if multiple probes measure it, take the median value
 atrial_fib_1_gene_data_list <- tapply(1:nrow(good_probe_to_gene_mappings), good_probe_to_gene_mappings$SYMBOL, function(probe_indices) {
   probe_ids_for_gene <- good_probe_to_gene_mappings$PROBEID[probe_indices]
@@ -61,8 +77,14 @@ atrial_fib_1_gene_data_list <- tapply(1:nrow(good_probe_to_gene_mappings), good_
 })
 # Convert list to matrix
 atrial_fib_1_gene_data <- do.call(rbind, atrial_fib_1_gene_data_list)
+dataset_1_genes_measured <- nrow(atrial_fib_1_gene_data)
 
 print("Converting Dataset 2 (Atrial Fibrillation) probes to genes...")
+# Track dataset-specific probe statistics
+dataset_2_total_probes <- nrow(atrial_fib_2_expression_data)
+dataset_2_mapped_probes <- sum(rownames(atrial_fib_2_expression_data) %in% good_probe_to_gene_mappings$PROBEID)
+dataset_2_unmapped_probes <- dataset_2_total_probes - dataset_2_mapped_probes
+
 # Same efficient process for second atrial fibrillation dataset
 atrial_fib_2_gene_data_list <- tapply(1:nrow(good_probe_to_gene_mappings), good_probe_to_gene_mappings$SYMBOL, function(probe_indices) {
   probe_ids_for_gene <- good_probe_to_gene_mappings$PROBEID[probe_indices]
@@ -74,8 +96,14 @@ atrial_fib_2_gene_data_list <- tapply(1:nrow(good_probe_to_gene_mappings), good_
   }
 })
 atrial_fib_2_gene_data <- do.call(rbind, atrial_fib_2_gene_data_list)
+dataset_2_genes_measured <- nrow(atrial_fib_2_gene_data)
 
 print("Converting Dataset 3 (Heart Failure) probes to genes...")
+# Track dataset-specific probe statistics
+dataset_3_total_probes <- nrow(heart_fail_1_expression_data)
+dataset_3_mapped_probes <- sum(rownames(heart_fail_1_expression_data) %in% good_probe_to_gene_mappings$PROBEID)
+dataset_3_unmapped_probes <- dataset_3_total_probes - dataset_3_mapped_probes
+
 # Same efficient process for first heart failure dataset
 heart_fail_1_gene_data_list <- tapply(1:nrow(good_probe_to_gene_mappings), good_probe_to_gene_mappings$SYMBOL, function(probe_indices) {
   probe_ids_for_gene <- good_probe_to_gene_mappings$PROBEID[probe_indices]
@@ -87,11 +115,15 @@ heart_fail_1_gene_data_list <- tapply(1:nrow(good_probe_to_gene_mappings), good_
   }
 })
 heart_fail_1_gene_data <- do.call(rbind, heart_fail_1_gene_data_list)
+dataset_3_genes_measured <- nrow(heart_fail_1_gene_data)
 
 print("Converting Dataset 4 (Heart Failure) - uses different chip type...")
 # Fourth dataset uses different microarray chip, need different conversion method
 different_chip_annotation <- getGEO("GPL11532", destdir = tempdir())
 different_chip_lookup_table <- Table(different_chip_annotation)
+
+# Track different chip annotation details
+gpl11532_total_probes_in_annotation <- nrow(different_chip_lookup_table)
 
 # Extract gene names from the chip annotation
 gene_names_from_different_chip <- c()
@@ -119,11 +151,21 @@ different_chip_probe_to_gene <- data.frame(
 )
 different_chip_probe_to_gene <- different_chip_probe_to_gene[!is.na(different_chip_probe_to_gene$gene) & different_chip_probe_to_gene$gene != "", ]
 
+# Track GPL11532 chip mapping efficiency
+gpl11532_probes_with_genes <- nrow(different_chip_probe_to_gene)
+gpl11532_probes_without_genes <- gpl11532_total_probes_in_annotation - gpl11532_probes_with_genes
+gpl11532_mapping_efficiency <- round(gpl11532_probes_with_genes / gpl11532_total_probes_in_annotation * 100, 2)
+
 # Find which probes from dataset 4 we can convert
 dataset_4_probe_ids <- rownames(heart_fail_2_expression_data)
 convertible_probes <- intersect(dataset_4_probe_ids, different_chip_probe_to_gene$probe)
 probe_gene_mapping_dataset_4 <- different_chip_probe_to_gene[match(convertible_probes, different_chip_probe_to_gene$probe), ]
 heart_fail_2_expression_subset <- heart_fail_2_expression_data[convertible_probes, ]
+
+# Track dataset 4 specific probe statistics
+dataset_4_total_probes <- length(dataset_4_probe_ids)
+dataset_4_mapped_probes <- length(convertible_probes)
+dataset_4_unmapped_probes <- dataset_4_total_probes - dataset_4_mapped_probes
 
 # Convert dataset 4 probes to genes using efficient method
 heart_fail_2_gene_data_list <- tapply(1:nrow(heart_fail_2_expression_subset), probe_gene_mapping_dataset_4$gene, function(probe_indices) {
@@ -134,6 +176,7 @@ heart_fail_2_gene_data_list <- tapply(1:nrow(heart_fail_2_expression_subset), pr
   }
 })
 heart_fail_2_gene_data <- do.call(rbind, heart_fail_2_gene_data_list)
+dataset_4_genes_measured <- nrow(heart_fail_2_gene_data)
 
 print("Combining all datasets together...")
 
@@ -242,12 +285,207 @@ if(length(genes_found_in_data) < length(important_cardiac_genes)) {
   print(paste("Missing genes:", paste(missing_genes, collapse = ", ")))
 }
 
+# Collect comprehensive gene mapping and integration statistics
+print("Collecting detailed statistics for CSV reports...")
+
+# Calculate probe-to-gene mapping ratios for HGU133Plus2 chip
+gene_probe_counts_hgu133 <- table(good_probe_to_gene_mappings$SYMBOL)
+single_probe_genes_hgu133 <- sum(gene_probe_counts_hgu133 == 1)
+multi_probe_genes_hgu133 <- sum(gene_probe_counts_hgu133 > 1)
+max_probes_per_gene_hgu133 <- max(gene_probe_counts_hgu133)
+avg_probes_per_gene_hgu133 <- round(mean(gene_probe_counts_hgu133), 2)
+
+# Calculate probe-to-gene mapping ratios for GPL11532 chip
+gene_probe_counts_gpl11532 <- table(different_chip_probe_to_gene$gene)
+single_probe_genes_gpl11532 <- sum(gene_probe_counts_gpl11532 == 1)
+multi_probe_genes_gpl11532 <- sum(gene_probe_counts_gpl11532 > 1)
+max_probes_per_gene_gpl11532 <- max(gene_probe_counts_gpl11532)
+avg_probes_per_gene_gpl11532 <- round(mean(gene_probe_counts_gpl11532), 2)
+
+# Gene coverage across datasets
+genes_dataset_1 <- rownames(atrial_fib_1_gene_data)
+genes_dataset_2 <- rownames(atrial_fib_2_gene_data)
+genes_dataset_3 <- rownames(heart_fail_1_gene_data)
+genes_dataset_4 <- rownames(heart_fail_2_gene_data)
+
+# Gene overlap analysis
+genes_in_all_4_datasets <- Reduce(intersect, list(genes_dataset_1, genes_dataset_2, genes_dataset_3, genes_dataset_4))
+genes_in_3_datasets <- length(all_unique_gene_names[rowSums(cbind(
+  all_unique_gene_names %in% genes_dataset_1,
+  all_unique_gene_names %in% genes_dataset_2,
+  all_unique_gene_names %in% genes_dataset_3,
+  all_unique_gene_names %in% genes_dataset_4
+)) >= 3])
+genes_in_2_datasets <- length(all_unique_gene_names[rowSums(cbind(
+  all_unique_gene_names %in% genes_dataset_1,
+  all_unique_gene_names %in% genes_dataset_2,
+  all_unique_gene_names %in% genes_dataset_3,
+  all_unique_gene_names %in% genes_dataset_4
+)) >= 2])
+genes_in_1_dataset_only <- length(all_unique_gene_names[rowSums(cbind(
+  all_unique_gene_names %in% genes_dataset_1,
+  all_unique_gene_names %in% genes_dataset_2,
+  all_unique_gene_names %in% genes_dataset_3,
+  all_unique_gene_names %in% genes_dataset_4
+)) == 1])
+
+# Missing data analysis in final combined matrix
+total_possible_values <- nrow(combined_expression_matrix) * ncol(combined_expression_matrix)
+missing_values <- sum(is.na(combined_expression_matrix))
+data_completeness_percentage <- round((total_possible_values - missing_values) / total_possible_values * 100, 2)
+
 print("Final dataset summary:")
 print(paste("- Total samples:", ncol(combined_expression_matrix)))
 print(paste("- Total genes:", nrow(combined_expression_matrix)))
 print(paste("- AF samples:", sum(combined_metadata$study_type == "AF")))
 print(paste("- HF samples:", sum(combined_metadata$study_type == "HF")))
+print(paste("- Data completeness:", data_completeness_percentage, "%"))
 print("")
+
+print("Generating detailed CSV reports...")
+
+# CSV 1: Probe Annotation Summary
+probe_annotation_summary <- data.frame(
+  Annotation_Database = c("HGU133Plus2.db", "HGU133Plus2.db", "GPL11532", "GPL11532"),
+  Dataset = c("GSE115574,GSE79768,GSE76701", "GSE115574,GSE79768,GSE76701", "GSE57338", "GSE57338"),
+  Chip_Type = c("HGU133Plus2", "HGU133Plus2", "GPL11532", "GPL11532"),
+  Metric = c("Total_Probes_in_Annotation", "Probes_with_Gene_Mapping", "Total_Probes_in_Annotation", "Probes_with_Gene_Mapping"),
+  Count = c(hgu133_total_probes_in_annotation, hgu133_probes_with_genes, gpl11532_total_probes_in_annotation, gpl11532_probes_with_genes),
+  Percentage = c(100, hgu133_mapping_efficiency, 100, gpl11532_mapping_efficiency),
+  stringsAsFactors = FALSE
+)
+
+# Add dataset-specific probe statistics
+dataset_probe_stats <- data.frame(
+  Dataset = c("GSE115574", "GSE79768", "GSE76701", "GSE57338"),
+  Dataset_Name = c("Atrial_Fibrillation_1", "Atrial_Fibrillation_2", "Heart_Failure_1", "Heart_Failure_2"),
+  Total_Probes_in_Raw_Data = c(dataset_1_total_probes, dataset_2_total_probes, dataset_3_total_probes, dataset_4_total_probes),
+  Mapped_Probes = c(dataset_1_mapped_probes, dataset_2_mapped_probes, dataset_3_mapped_probes, dataset_4_mapped_probes),
+  Unmapped_Probes = c(dataset_1_unmapped_probes, dataset_2_unmapped_probes, dataset_3_unmapped_probes, dataset_4_unmapped_probes),
+  Mapping_Efficiency_Percent = c(
+    round(dataset_1_mapped_probes/dataset_1_total_probes*100, 2),
+    round(dataset_2_mapped_probes/dataset_2_total_probes*100, 2),
+    round(dataset_3_mapped_probes/dataset_3_total_probes*100, 2),
+    round(dataset_4_mapped_probes/dataset_4_total_probes*100, 2)
+  ),
+  Final_Genes_Measured = c(dataset_1_genes_measured, dataset_2_genes_measured, dataset_3_genes_measured, dataset_4_genes_measured),
+  stringsAsFactors = FALSE
+)
+
+write.csv(rbind(
+  data.frame(Section = "Annotation_Overview", probe_annotation_summary),
+  data.frame(Section = "Dataset_Specific_Mapping", 
+             Annotation_Database = dataset_probe_stats$Dataset,
+             Dataset = dataset_probe_stats$Dataset_Name,
+             Chip_Type = c(rep("HGU133Plus2", 3), "GPL11532"),
+             Metric = "Dataset_Stats",
+             Count = dataset_probe_stats$Total_Probes_in_Raw_Data,
+             Percentage = dataset_probe_stats$Mapping_Efficiency_Percent)
+), file = file.path(analysis_results_folder, "01_probe_annotation_summary.csv"), row.names = FALSE)
+
+# CSV 2: Gene Mapping Details
+gene_coverage_matrix <- data.frame(
+  Gene = all_unique_gene_names,
+  Present_in_GSE115574 = all_unique_gene_names %in% genes_dataset_1,
+  Present_in_GSE79768 = all_unique_gene_names %in% genes_dataset_2,
+  Present_in_GSE76701 = all_unique_gene_names %in% genes_dataset_3,
+  Present_in_GSE57338 = all_unique_gene_names %in% genes_dataset_4,
+  stringsAsFactors = FALSE
+)
+gene_coverage_matrix$Total_Datasets_Present <- rowSums(gene_coverage_matrix[,2:5])
+
+# Probe-to-gene mapping details
+probe_gene_mapping_summary <- data.frame(
+  Chip_Type = c("HGU133Plus2", "HGU133Plus2", "HGU133Plus2", "GPL11532", "GPL11532", "GPL11532"),
+  Mapping_Type = c("Single_Probe_Genes", "Multi_Probe_Genes", "Max_Probes_Per_Gene", 
+                   "Single_Probe_Genes", "Multi_Probe_Genes", "Max_Probes_Per_Gene"),
+  Count = c(single_probe_genes_hgu133, multi_probe_genes_hgu133, max_probes_per_gene_hgu133,
+            single_probe_genes_gpl11532, multi_probe_genes_gpl11532, max_probes_per_gene_gpl11532),
+  Average_Probes_Per_Gene = c(avg_probes_per_gene_hgu133, avg_probes_per_gene_hgu133, avg_probes_per_gene_hgu133,
+                             avg_probes_per_gene_gpl11532, avg_probes_per_gene_gpl11532, avg_probes_per_gene_gpl11532),
+  stringsAsFactors = FALSE
+)
+
+# Important genes tracking
+important_genes_status <- data.frame(
+  Gene = important_cardiac_genes,
+  Found_in_Final_Dataset = important_cardiac_genes %in% all_unique_gene_names,
+  Present_in_GSE115574 = important_cardiac_genes %in% genes_dataset_1,
+  Present_in_GSE79768 = important_cardiac_genes %in% genes_dataset_2,
+  Present_in_GSE76701 = important_cardiac_genes %in% genes_dataset_3,
+  Present_in_GSE57338 = important_cardiac_genes %in% genes_dataset_4,
+  stringsAsFactors = FALSE
+)
+
+# Combine all gene mapping details into one dataframe
+gene_coverage_summary <- data.frame(
+  Section = "Gene_Coverage_Summary",
+  Metric = c("Genes_in_all_4_datasets", "Genes_in_3_or_more_datasets", "Genes_in_2_or_more_datasets", "Genes_in_only_1_dataset"),
+  Count = c(length(genes_in_all_4_datasets), genes_in_3_datasets, genes_in_2_datasets, genes_in_1_dataset_only),
+  stringsAsFactors = FALSE
+)
+
+probe_gene_mapping_summary$Section <- "Probe_Gene_Mapping"
+important_genes_status$Section <- "Important_Cardiac_Genes"
+
+write.csv(rbind(
+  gene_coverage_summary,
+  data.frame(Section = probe_gene_mapping_summary$Section, 
+             Metric = probe_gene_mapping_summary$Mapping_Type,
+             Count = probe_gene_mapping_summary$Count,
+             Average_Probes_Per_Gene = probe_gene_mapping_summary$Average_Probes_Per_Gene),
+  data.frame(Section = important_genes_status$Section,
+             Metric = important_genes_status$Gene,
+             Count = as.numeric(important_genes_status$Found_in_Final_Dataset),
+             Total_Datasets_Present = rowSums(important_genes_status[,3:6]))
+), file = file.path(analysis_results_folder, "01_gene_mapping_details.csv"), row.names = FALSE)
+
+# CSV 3: Data Integration Metrics
+sample_summary <- data.frame(
+  Dataset = c("GSE115574", "GSE79768", "GSE76701", "GSE57338", "Total"),
+  Dataset_Name = c("Atrial_Fibrillation_1", "Atrial_Fibrillation_2", "Heart_Failure_1", "Heart_Failure_2", "Combined"),
+  Study_Type = c("AF", "AF", "HF", "HF", "All"),
+  Total_Samples = c(ncol(atrial_fib_1_gene_data), ncol(atrial_fib_2_gene_data), ncol(heart_fail_1_gene_data), ncol(heart_fail_2_gene_data), ncol(combined_expression_matrix)),
+  AF_Samples = c(sum(atrial_fib_1_sample_conditions == "AF"), sum(atrial_fib_2_sample_conditions == "AF"), 0, 0, sum(combined_metadata$condition == "AF")),
+  HF_Samples = c(0, 0, sum(heart_fail_1_sample_conditions == "HF"), sum(heart_fail_2_sample_conditions == "HF"), sum(combined_metadata$condition == "HF")),
+  Control_Samples = c(sum(atrial_fib_1_sample_conditions == "SR"), sum(atrial_fib_2_sample_conditions == "SR"), 
+                     sum(heart_fail_1_sample_conditions == "Control"), sum(heart_fail_2_sample_conditions == "Control"), 
+                     sum(combined_metadata$group == "Control")),
+  stringsAsFactors = FALSE
+)
+
+quality_metrics <- data.frame(
+  Metric = c("Total_Unique_Genes", "Total_Samples", "Total_Possible_Data_Points", "Missing_Data_Points", 
+             "Data_Completeness_Percent", "Important_Cardiac_Genes_Found", "Important_Cardiac_Genes_Total"),
+  Value = c(nrow(combined_expression_matrix), ncol(combined_expression_matrix), total_possible_values, 
+            missing_values, data_completeness_percentage, length(genes_found_in_data), length(important_cardiac_genes)),
+  stringsAsFactors = FALSE
+)
+
+# Combine all integration metrics into one dataframe
+sample_summary$Section <- "Sample_Summary"
+quality_metrics$Section <- "Quality_Control_Metrics"
+dataset_probe_stats$Section <- "Dataset_Contribution"
+
+write.csv(rbind(
+  data.frame(Section = sample_summary$Section, 
+             Metric = paste(sample_summary$Dataset, sample_summary$Dataset_Name, sep="_"),
+             Value = sample_summary$Total_Samples,
+             Additional_Info = paste("AF:", sample_summary$AF_Samples, "HF:", sample_summary$HF_Samples, "Control:", sample_summary$Control_Samples)),
+  data.frame(Section = quality_metrics$Section,
+             Metric = quality_metrics$Metric,
+             Value = quality_metrics$Value,
+             Additional_Info = ""),
+  data.frame(Section = dataset_probe_stats$Section,
+             Metric = paste(dataset_probe_stats$Dataset, "mapping_efficiency", sep="_"),
+             Value = dataset_probe_stats$Mapping_Efficiency_Percent,
+             Additional_Info = paste("Mapped:", dataset_probe_stats$Mapped_Probes, "of", dataset_probe_stats$Total_Probes_in_Raw_Data))
+), file = file.path(analysis_results_folder, "01_data_integration_metrics.csv"), row.names = FALSE)
+
+print("CSV reports generated successfully!")
+print("- 01_probe_annotation_summary.csv: Probe and annotation details")
+print("- 01_gene_mapping_details.csv: Gene coverage and mapping ratios") 
+print("- 01_data_integration_metrics.csv: Integration quality and sample summary")
 
 print("Saving combined dataset...")
 
