@@ -4,6 +4,10 @@
 library(limma)     # Package for gene expression analysis
 library(ggplot2)   # Package for making plots
 library(pheatmap)  # Package for heatmaps
+library(RColorBrewer) # Package for color palettes
+library(reshape2)  # Package for data reshaping
+library(ComplexHeatmap) # Package for complex heatmaps
+library(dplyr)     # Package for data manipulation
 
 # Set up folders
 analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
@@ -221,7 +225,225 @@ create_volcano_plot <- function(gene_results, condition_name, p_cutoff = 0.05, f
 af_volcano_plot <- create_volcano_plot(atrial_fib_all_gene_results, "Atrial Fibrillation")
 hf_volcano_plot <- create_volcano_plot(heart_failure_all_gene_results, "Heart Failure")
 
-# Save plots
+# Create comprehensive differential expression visualization
+pdf(file.path(plots_folder, "03_comprehensive_differential_expression_analysis.pdf"), width = 16, height = 12)
+
+print("Creating volcano plots...")
+print(af_volcano_plot)
+print(hf_volcano_plot)
+
+print("Creating MA plots...")
+# 1. MA plots (log fold change vs average expression)
+create_ma_plot <- function(gene_results, condition_name, p_cutoff = 0.05, fold_cutoff = 0.5) {
+  
+  plot_data <- data.frame(
+    gene_name = rownames(gene_results),
+    avg_expression = gene_results$AveExpr,
+    fold_change = gene_results$logFC,
+    p_value = gene_results$adj.P.Val,
+    stringsAsFactors = FALSE
+  )
+  
+  # Color genes based on significance
+  plot_data$significance <- "Not Significant"
+  plot_data$significance[abs(plot_data$fold_change) >= fold_cutoff & plot_data$p_value <= p_cutoff] <- "Significant"
+  
+  # Highlight CAMK genes
+  plot_data$gene_type <- "Other"
+  plot_data$gene_type[plot_data$gene_name %in% important_calcium_genes] <- "CAMK Gene"
+  
+  ma_plot <- ggplot(plot_data, aes(x = avg_expression, y = fold_change, color = significance)) +
+    geom_point(alpha = 0.6) +
+    geom_point(data = subset(plot_data, gene_type == "CAMK Gene"), 
+               aes(x = avg_expression, y = fold_change), 
+               color = "red", size = 3) +
+    geom_text(data = subset(plot_data, gene_type == "CAMK Gene"),
+              aes(x = avg_expression, y = fold_change, label = gene_name),
+              color = "darkred", vjust = -0.5, size = 3) +
+    scale_color_manual(values = c("Not Significant" = "gray", "Significant" = "blue")) +
+    geom_hline(yintercept = c(-fold_cutoff, fold_cutoff), linetype = "dashed", color = "red") +
+    labs(title = paste(condition_name, "MA Plot - Average Expression vs Fold Change"),
+         x = "Average Log2 Expression",
+         y = "Log2 Fold Change") +
+    theme_minimal()
+  
+  return(ma_plot)
+}
+
+af_ma_plot <- create_ma_plot(atrial_fib_all_gene_results, "Atrial Fibrillation")
+hf_ma_plot <- create_ma_plot(heart_failure_all_gene_results, "Heart Failure")
+
+print(af_ma_plot)
+print(hf_ma_plot)
+
+print("Creating threshold comparison plots...")
+# 2. Threshold comparison bar plot
+threshold_counts <- all_threshold_results %>%
+  group_by(condition, threshold) %>%
+  summarise(total_genes = sum(total_significant_genes), .groups = 'drop')
+
+threshold_plot <- ggplot(threshold_counts, aes(x = threshold, y = total_genes, fill = condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+  labs(title = "Significant Genes Across Different Thresholds",
+       subtitle = "Comparison of gene counts at default, lenient, and no_filtering thresholds",
+       x = "Significance Threshold", y = "Number of Significant Genes",
+       fill = "Condition") +
+  theme_minimal() +
+  geom_text(aes(label = total_genes), vjust = -0.3, position = position_dodge(width = 0.9))
+
+print(threshold_plot)
+
+print("Creating CAMK gene expression plots...")
+# 3. CAMK gene expression boxplots
+load(file.path(analysis_results_folder, "02_condition_specific_corrected.RData"))
+
+# Get CAMK genes that are present in both datasets
+camk_in_af <- intersect(important_calcium_genes, rownames(af_combat_expr))
+camk_in_hf <- intersect(important_calcium_genes, rownames(hf_combat_expr))
+
+if(length(camk_in_af) > 0) {
+  # AF CAMK expression
+  af_camk_expr <- af_combat_expr[camk_in_af, , drop = FALSE]
+  af_camk_data <- melt(as.matrix(af_camk_expr))
+  names(af_camk_data) <- c("Gene", "Sample", "Expression")
+  af_camk_data$Condition <- af_metadata$group[match(af_camk_data$Sample, rownames(af_metadata))]
+  
+  af_camk_plot <- ggplot(af_camk_data, aes(x = Gene, y = Expression, fill = Condition)) +
+    geom_boxplot() +
+    scale_fill_manual(values = c("AF" = "#FF6B6B", "Control" = "#95E4D3")) +
+    labs(title = "CAMK Gene Expression in Atrial Fibrillation",
+         subtitle = "Expression levels of CAMK genes: AF vs Control",
+         x = "CAMK Gene", y = "Log2 Expression Level") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(af_camk_plot)
+}
+
+if(length(camk_in_hf) > 0) {
+  # HF CAMK expression
+  hf_camk_expr <- hf_combat_expr[camk_in_hf, , drop = FALSE]
+  hf_camk_data <- melt(as.matrix(hf_camk_expr))
+  names(hf_camk_data) <- c("Gene", "Sample", "Expression")
+  hf_camk_data$Condition <- hf_metadata$group[match(hf_camk_data$Sample, rownames(hf_metadata))]
+  
+  hf_camk_plot <- ggplot(hf_camk_data, aes(x = Gene, y = Expression, fill = Condition)) +
+    geom_boxplot() +
+    scale_fill_manual(values = c("HF" = "#4ECDC4", "Control" = "#95E4D3")) +
+    labs(title = "CAMK Gene Expression in Heart Failure",
+         subtitle = "Expression levels of CAMK genes: HF vs Control",
+         x = "CAMK Gene", y = "Log2 Expression Level") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(hf_camk_plot)
+}
+
+print("Creating heatmaps of top significant genes...")
+# 4. Heatmaps of top significant genes
+# AF top genes heatmap
+af_top_genes <- head(atrial_fib_all_gene_results[order(atrial_fib_all_gene_results$adj.P.Val), ], 50)
+if(nrow(af_top_genes) > 0) {
+  af_top_gene_names <- rownames(af_top_genes)
+  af_top_gene_names <- af_top_gene_names[af_top_gene_names %in% rownames(af_combat_expr)]
+  
+  if(length(af_top_gene_names) > 0) {
+    af_heatmap_data <- af_combat_expr[af_top_gene_names, ]
+    af_annotation <- data.frame(
+      Condition = af_metadata$group,
+      Dataset = af_metadata$dataset
+    )
+    rownames(af_annotation) <- rownames(af_metadata)
+    
+    # Create annotation colors
+    ann_colors <- list(
+      Condition = c("AF" = "#FF6B6B", "Control" = "#95E4D3"),
+      Dataset = c("GSE115574" = "#FF9999", "GSE79768" = "#FFB366")
+    )
+    
+    pheatmap(af_heatmap_data,
+             main = "Top 50 Significant Genes in Atrial Fibrillation",
+             cluster_rows = TRUE,
+             cluster_cols = TRUE,
+             annotation_col = af_annotation,
+             annotation_colors = ann_colors,
+             scale = "row",
+             show_colnames = FALSE,
+             fontsize = 8)
+  }
+}
+
+# HF top genes heatmap
+hf_top_genes <- head(heart_failure_all_gene_results[order(heart_failure_all_gene_results$adj.P.Val), ], 50)
+if(nrow(hf_top_genes) > 0) {
+  hf_top_gene_names <- rownames(hf_top_genes)
+  hf_top_gene_names <- hf_top_gene_names[hf_top_gene_names %in% rownames(hf_combat_expr)]
+  
+  if(length(hf_top_gene_names) > 0) {
+    hf_heatmap_data <- hf_combat_expr[hf_top_gene_names, ]
+    hf_annotation <- data.frame(
+      Condition = hf_metadata$group,
+      Dataset = hf_metadata$dataset
+    )
+    rownames(hf_annotation) <- rownames(hf_metadata)
+    
+    # Create annotation colors
+    ann_colors <- list(
+      Condition = c("HF" = "#4ECDC4", "Control" = "#95E4D3"),
+      Dataset = c("GSE57338" = "#66D9CC", "GSE76701" = "#7FCCB8")
+    )
+    
+    pheatmap(hf_heatmap_data,
+             main = "Top 50 Significant Genes in Heart Failure",
+             cluster_rows = TRUE,
+             cluster_cols = TRUE,
+             annotation_col = hf_annotation,
+             annotation_colors = ann_colors,
+             scale = "row",
+             show_colnames = FALSE,
+             fontsize = 8)
+  }
+}
+
+print("Creating p-value distribution plots...")
+# 5. P-value distribution plots
+af_pval_data <- data.frame(
+  p_value = atrial_fib_all_gene_results$P.Value,
+  adj_p_value = atrial_fib_all_gene_results$adj.P.Val,
+  condition = "AF"
+)
+
+hf_pval_data <- data.frame(
+  p_value = heart_failure_all_gene_results$P.Value,
+  adj_p_value = heart_failure_all_gene_results$adj.P.Val,
+  condition = "HF"
+)
+
+all_pval_data <- rbind(af_pval_data, hf_pval_data)
+
+pval_plot <- ggplot(all_pval_data, aes(x = p_value, fill = condition)) +
+  geom_histogram(alpha = 0.7, bins = 50, position = "identity") +
+  scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+  labs(title = "P-value Distribution Across Conditions",
+       subtitle = "Distribution of raw p-values from differential expression analysis",
+       x = "P-value", y = "Count", fill = "Condition") +
+  theme_minimal()
+
+print(pval_plot)
+
+dev.off()
+
+print("Comprehensive differential expression plots saved!")
+print("- Volcano plots for both conditions")
+print("- MA plots showing fold change vs average expression")
+print("- Threshold comparison showing gene counts")
+print("- CAMK gene expression boxplots")
+print("- Heatmaps of top 50 significant genes")
+print("- P-value distribution analysis")
+print("")
+
+# Also save individual volcano plots (legacy)
 pdf(file.path(plots_folder, "03_volcano_plots_gene_changes.pdf"), width = 12, height = 8)
 print(af_volcano_plot)
 print(hf_volcano_plot)

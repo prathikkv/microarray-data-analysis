@@ -278,6 +278,168 @@ for(gene_set_name in names(hf_processed$gene_lists)) {
   }
 }
 
+print("=== CREATING COMPREHENSIVE VISUALIZATION ===")
+
+# Create comprehensive pathway visualization
+pdf(file.path(plots_folder, "05_comprehensive_pathway_analysis.pdf"), width = 16, height = 12)
+
+print("Creating hierarchical gene analysis visualization...")
+
+# 1. Hierarchical gene count visualization (Sankey-style bar plot)
+hierarchical_data <- data.frame(
+  Condition = c(rep("AF", 4), rep("HF", 4)),
+  Level = rep(c("All_Genes", "Significant_Lenient", "Kinase_Genes", "CAMK_Genes"), 2),
+  Count = c(
+    nrow(atrial_fib_all_gene_results),
+    length(af_processed$gene_lists$significant_lenient),
+    length(af_processed$kinase_genes_found),
+    length(af_processed$camk_genes_found),
+    nrow(heart_failure_all_gene_results),
+    length(hf_processed$gene_lists$significant_lenient),
+    length(hf_processed$kinase_genes_found),
+    length(hf_processed$camk_genes_found)
+  )
+)
+
+hierarchical_plot <- ggplot(hierarchical_data, aes(x = Level, y = Count, fill = Condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+  labs(title = "Hierarchical Gene Analysis: All → Significant → Kinases → CAMK",
+       subtitle = "Gene count progression through filtering steps",
+       x = "Analysis Level", y = "Number of Genes") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = Count), vjust = -0.3, position = position_dodge(width = 0.9))
+
+print(hierarchical_plot)
+
+# 2. Kinase family expression heatmap
+if(nrow(all_kinase_summary) > 0) {
+  kinase_heatmap_data <- all_kinase_summary[, c("gene", "condition", "fold_change")]
+  kinase_wide <- reshape2::dcast(kinase_heatmap_data, gene ~ condition, value.var = "fold_change")
+  rownames(kinase_wide) <- kinase_wide$gene
+  kinase_wide$gene <- NULL
+  
+  # Remove genes with all NA
+  kinase_wide <- kinase_wide[complete.cases(kinase_wide), ]
+  
+  if(nrow(kinase_wide) > 0) {
+    # Color by gene family
+    kinase_annotation <- data.frame(
+      Gene_Family = ifelse(rownames(kinase_wide) %in% important_calcium_genes, "CAMK", "Other_Kinase"),
+      row.names = rownames(kinase_wide)
+    )
+    
+    ann_colors <- list(
+      Gene_Family = c("CAMK" = "#FF6B6B", "Other_Kinase" = "#4ECDC4")
+    )
+    
+    pheatmap(as.matrix(kinase_wide),
+             main = "Kinase Gene Expression Changes: AF vs HF",
+             cluster_rows = TRUE,
+             cluster_cols = FALSE,
+             annotation_row = kinase_annotation,
+             annotation_colors = ann_colors,
+             scale = "none",
+             fontsize = 10,
+             color = colorRampPalette(c("#313695", "white", "#A50026"))(100))
+  }
+}
+
+# 3. CAMK gene expression comparison
+camk_comparison_data <- all_kinase_summary[all_kinase_summary$gene_family == "CAMK", ]
+if(nrow(camk_comparison_data) > 0) {
+  camk_plot <- ggplot(camk_comparison_data, aes(x = gene, y = fold_change, fill = condition)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+    labs(title = "CAMK Gene Expression Changes in Heart Disease",
+         subtitle = "Fold change in AF and HF compared to controls",
+         x = "CAMK Gene", y = "Log2 Fold Change") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_hline(yintercept = c(-0.5, 0.5), linetype = "dotted", color = "red")
+  
+  print(camk_plot)
+}
+
+# 4. Pathway enrichment summary visualization
+if(nrow(complete_analysis_summary) > 0) {
+  # Create enrichment overview plot
+  enrichment_plot_data <- complete_analysis_summary
+  enrichment_plot_data$condition <- ifelse(grepl("AF_", enrichment_plot_data$analysis_name), "AF", "HF")
+  enrichment_plot_data$gene_set <- gsub("AF_|HF_", "", enrichment_plot_data$analysis_name)
+  
+  enrichment_overview <- ggplot(enrichment_plot_data, aes(x = gene_set, y = significant_terms, fill = condition)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    facet_wrap(~database, scales = "free_y") +
+    scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+    labs(title = "Pathway Enrichment Results Across Databases and Gene Sets",
+         subtitle = "Number of significantly enriched terms by analysis type",
+         x = "Gene Set", y = "Significant Terms") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(enrichment_overview)
+  
+  # Top enriched terms visualization
+  if(nrow(enrichment_plot_data[enrichment_plot_data$significant_terms > 0, ]) > 0) {
+    top_terms_data <- enrichment_plot_data[enrichment_plot_data$significant_terms > 0, ]
+    top_terms_data <- top_terms_data[order(-top_terms_data$significant_terms), ]
+    
+    if(nrow(top_terms_data) > 0) {
+      top_terms_plot <- ggplot(head(top_terms_data, 20), aes(x = reorder(paste(condition, gene_set, database), significant_terms), y = significant_terms, fill = condition)) +
+        geom_col() +
+        coord_flip() +
+        scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+        labs(title = "Top 20 Enrichment Results",
+             subtitle = "Ranked by number of significant terms found",
+             x = "Analysis (Condition - Gene Set - Database)", y = "Significant Terms") +
+        theme_minimal()
+      
+      print(top_terms_plot)
+    }
+  }
+}
+
+# 5. Gene significance comparison
+gene_significance_data <- data.frame(
+  Gene = c(af_processed$camk_genes_found, hf_processed$camk_genes_found),
+  Condition = c(rep("AF", length(af_processed$camk_genes_found)), rep("HF", length(hf_processed$camk_genes_found)))
+)
+
+# Get p-values for these genes
+af_camk_pvals <- atrial_fib_all_gene_results[af_processed$camk_genes_found, "adj.P.Val"]
+hf_camk_pvals <- heart_failure_all_gene_results[hf_processed$camk_genes_found, "adj.P.Val"]
+
+gene_significance_data$adj_p_value <- c(af_camk_pvals, hf_camk_pvals)
+gene_significance_data$neg_log_p <- -log10(gene_significance_data$adj_p_value)
+
+if(nrow(gene_significance_data) > 0) {
+  significance_plot <- ggplot(gene_significance_data, aes(x = Gene, y = neg_log_p, fill = Condition)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4")) +
+    labs(title = "CAMK Gene Statistical Significance in Heart Disease",
+         subtitle = "Higher bars indicate more significant differential expression",
+         x = "CAMK Gene", y = "-log10(Adjusted P-value)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red", alpha = 0.7) +
+    geom_hline(yintercept = -log10(0.20), linetype = "dotted", color = "orange", alpha = 0.7)
+  
+  print(significance_plot)
+}
+
+dev.off()
+
+print("Comprehensive pathway analysis visualization complete!")
+print("- Hierarchical gene analysis (All → Significant → Kinases → CAMK)")
+print("- Kinase family expression heatmap")  
+print("- CAMK gene expression comparison")
+print("- Pathway enrichment summary across databases")
+print("- Gene statistical significance visualization")
+print("")
+
 print("=== GENERATING COMPREHENSIVE SUMMARY ===")
 
 # Function to summarize pathway results

@@ -3,13 +3,19 @@
 
 library(GEOquery)       # Package to work with GEO datasets
 library(hgu133plus2.db) # Database to convert probes to gene names
+library(ggplot2)        # Package for making plots
+library(pheatmap)       # Package for heatmaps
+library(VennDiagram)    # Package for Venn diagrams
+library(RColorBrewer)   # Package for color palettes
 
 # Set up our folder paths
 main_data_folder <- "/Users/macbookpro/Desktop/Ananylum/data"
 analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
+plots_folder <- file.path(analysis_results_folder, "data_loading_quality_control")
 
-# Make sure results folder exists
+# Make sure folders exist
 dir.create(analysis_results_folder, showWarnings = FALSE)
+dir.create(plots_folder, showWarnings = FALSE)
 
 print("Loading cardiac datasets from downloaded files...")
 
@@ -340,6 +346,162 @@ print(paste("- Total genes:", nrow(combined_expression_matrix)))
 print(paste("- AF samples:", sum(combined_metadata$study_type == "AF")))
 print(paste("- HF samples:", sum(combined_metadata$study_type == "HF")))
 print(paste("- Data completeness:", data_completeness_percentage, "%"))
+print("")
+
+print("Creating comprehensive quality control and visualization plots...")
+
+# Create comprehensive plots for data loading QC
+pdf(file.path(plots_folder, "01_data_loading_quality_control.pdf"), width = 14, height = 10)
+
+# 1. Probe mapping summary bar plot
+probe_mapping_data <- data.frame(
+  Dataset = c("GSE115574", "GSE79768", "GSE76701", "GSE57338"),
+  Dataset_Name = c("AF_1", "AF_2", "HF_1", "HF_2"),
+  Total_Probes = c(dataset_1_total_probes, dataset_2_total_probes, dataset_3_total_probes, dataset_4_total_probes),
+  Mapped_Probes = c(dataset_1_mapped_probes, dataset_2_mapped_probes, dataset_3_mapped_probes, dataset_4_mapped_probes),
+  Unmapped_Probes = c(dataset_1_unmapped_probes, dataset_2_unmapped_probes, dataset_3_unmapped_probes, dataset_4_unmapped_probes)
+)
+
+library(reshape2)
+probe_mapping_long <- melt(probe_mapping_data[,c("Dataset_Name", "Mapped_Probes", "Unmapped_Probes")], 
+                          id.vars = "Dataset_Name", variable.name = "Mapping_Status", value.name = "Count")
+
+mapping_plot <- ggplot(probe_mapping_long, aes(x = Dataset_Name, y = Count, fill = Mapping_Status)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("Mapped_Probes" = "#2E8B57", "Unmapped_Probes" = "#CD5C5C")) +
+  labs(title = "Probe Mapping Success Across Datasets",
+       subtitle = "Green: Successfully mapped to genes, Red: Failed mapping",
+       x = "Dataset", y = "Number of Probes", fill = "Mapping Status") +
+  theme_minimal() +
+  geom_text(data = probe_mapping_data, aes(x = Dataset_Name, y = Total_Probes + 500, 
+                                          label = paste0(round(Mapped_Probes/Total_Probes*100, 1), "%")),
+           inherit.aes = FALSE, vjust = 0)
+
+print(mapping_plot)
+
+# 2. Gene coverage Venn diagram (simplified for 4 datasets)
+print("Creating gene overlap visualization...")
+
+# For visualization, we'll show the overlap between conditions
+af_genes <- unique(c(genes_dataset_1, genes_dataset_2))
+hf_genes <- unique(c(genes_dataset_3, genes_dataset_4))
+all_genes_set <- unique(c(af_genes, hf_genes))
+
+# Create overlap data
+gene_overlap_data <- data.frame(
+  Gene_Set = c("AF_only", "HF_only", "Shared", "AF_total", "HF_total", "Combined_total"),
+  Count = c(
+    length(setdiff(af_genes, hf_genes)),
+    length(setdiff(hf_genes, af_genes)),
+    length(intersect(af_genes, hf_genes)),
+    length(af_genes),
+    length(hf_genes),
+    length(all_genes_set)
+  )
+)
+
+overlap_plot <- ggplot(gene_overlap_data[1:3,], aes(x = Gene_Set, y = Count, fill = Gene_Set)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("AF_only" = "#FF6B6B", "HF_only" = "#4ECDC4", "Shared" = "#45B7D1")) +
+  labs(title = "Gene Coverage Overlap Between AF and HF Studies",
+       subtitle = "Showing genes unique to each condition vs shared genes",
+       x = "Gene Set", y = "Number of Genes") +
+  theme_minimal() +
+  geom_text(aes(label = Count), vjust = -0.3)
+
+print(overlap_plot)
+
+# 3. Expression distribution plots (sample from combined matrix)
+set.seed(123)
+sample_genes <- sample(rownames(combined_expression_matrix)[!is.na(rowSums(combined_expression_matrix))], 1000)
+sample_expression <- combined_expression_matrix[sample_genes, ]
+
+# Box plot of expression distributions by dataset
+sample_metadata <- data.frame(
+  Sample_ID = colnames(sample_expression),
+  Dataset = combined_metadata$dataset,
+  Condition = combined_metadata$group
+)
+
+expression_long <- melt(as.matrix(sample_expression))
+names(expression_long) <- c("Gene", "Sample_ID", "Expression")
+expression_long <- merge(expression_long, sample_metadata, by = "Sample_ID")
+expression_long <- expression_long[!is.na(expression_long$Expression), ]
+
+expression_boxplot <- ggplot(expression_long, aes(x = Dataset, y = Expression, fill = Condition)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("AF" = "#FF6B6B", "HF" = "#4ECDC4", "Control" = "#95E4D3", "SR" = "#95E4D3")) +
+  labs(title = "Expression Distributions Across Datasets (Sample of 1000 genes)",
+       subtitle = "Boxplots show median, quartiles, and outliers",
+       x = "Dataset", y = "Log2 Expression Level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(expression_boxplot)
+
+# 4. Missing data heatmap
+missing_data_summary <- data.frame(
+  Dataset = c("GSE115574", "GSE79768", "GSE76701", "GSE57338"),
+  Total_Genes = c(dataset_1_genes_measured, dataset_2_genes_measured, dataset_3_genes_measured, dataset_4_genes_measured),
+  Missing_in_Combined = c(
+    sum(!all_unique_gene_names %in% genes_dataset_1),
+    sum(!all_unique_gene_names %in% genes_dataset_2),
+    sum(!all_unique_gene_names %in% genes_dataset_3),
+    sum(!all_unique_gene_names %in% genes_dataset_4)
+  )
+)
+
+missing_data_summary$Present_in_Combined <- missing_data_summary$Total_Genes
+missing_data_long <- melt(missing_data_summary[,c("Dataset", "Present_in_Combined", "Missing_in_Combined")],
+                         id.vars = "Dataset", variable.name = "Status", value.name = "Count")
+
+missing_plot <- ggplot(missing_data_long, aes(x = Dataset, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("Present_in_Combined" = "#2E8B57", "Missing_in_Combined" = "#FF6B6B")) +
+  labs(title = "Gene Availability Across Datasets in Combined Matrix",
+       subtitle = "Green: Genes available in combined dataset, Red: Genes missing",
+       x = "Dataset", y = "Number of Genes") +
+  theme_minimal()
+
+print(missing_plot)
+
+# 5. Important genes tracking
+important_genes_plot_data <- data.frame(
+  Gene = important_cardiac_genes,
+  Found = important_cardiac_genes %in% all_unique_gene_names,
+  AF_1 = important_cardiac_genes %in% genes_dataset_1,
+  AF_2 = important_cardiac_genes %in% genes_dataset_2,
+  HF_1 = important_cardiac_genes %in% genes_dataset_3,
+  HF_2 = important_cardiac_genes %in% genes_dataset_4
+)
+
+# Convert to long format for heatmap
+important_genes_long <- melt(important_genes_plot_data, id.vars = "Gene", variable.name = "Dataset", value.name = "Present")
+important_genes_long$Present <- as.numeric(important_genes_long$Present)
+
+important_genes_heatmap <- ggplot(important_genes_long, aes(x = Dataset, y = Gene, fill = factor(Present))) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("0" = "#FFE5E5", "1" = "#2E8B57"), labels = c("Absent", "Present")) +
+  labs(title = "Important Cardiac Genes Availability Across Datasets",
+       subtitle = "Tracking key cardiac and CAMK genes across all 4 studies",
+       x = "Dataset", y = "Gene", fill = "Gene Present") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(important_genes_heatmap)
+
+dev.off()
+
+print("Quality control plots saved successfully!")
+print(paste("- Saved to:", file.path(plots_folder, "01_data_loading_quality_control.pdf")))
+print("")
+
+print("VISUALIZATION SUMMARY:")
+print("- Probe mapping success rates across datasets")
+print("- Gene coverage overlap between AF and HF studies") 
+print("- Expression distributions to check data quality")
+print("- Missing data patterns in combined matrix")
+print("- Important cardiac genes availability tracking")
 print("")
 
 print("Generating detailed CSV reports...")
