@@ -10,9 +10,8 @@ library(ComplexHeatmap) # Package for complex heatmaps
 library(dplyr)     # Package for data manipulation
 
 # Set up folders
-analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
-plots_folder <- file.path(analysis_results_folder, "condition_specific_analysis")
-dir.create(plots_folder, showWarnings = FALSE)
+analysis_results_folder <- "results"
+dir.create(analysis_results_folder, showWarnings = FALSE)
 
 # List of CAMK genes we're specially interested in
 important_calcium_genes <- c("CAMK1", "CAMK1D", "CAMK1G", "CAMK2A", "CAMK2B", "CAMK2D", 
@@ -226,7 +225,7 @@ af_volcano_plot <- create_volcano_plot(atrial_fib_all_gene_results, "Atrial Fibr
 hf_volcano_plot <- create_volcano_plot(heart_failure_all_gene_results, "Heart Failure")
 
 # Create comprehensive differential expression visualization
-pdf(file.path(plots_folder, "03_comprehensive_differential_expression_analysis.pdf"), width = 16, height = 12)
+pdf(file.path(analysis_results_folder, "03_comprehensive_differential_expression_analysis.pdf"), width = 16, height = 12)
 
 print("Creating volcano plots...")
 print(af_volcano_plot)
@@ -444,7 +443,7 @@ print("- P-value distribution analysis")
 print("")
 
 # Also save individual volcano plots (legacy)
-pdf(file.path(plots_folder, "03_volcano_plots_gene_changes.pdf"), width = 12, height = 8)
+pdf(file.path(analysis_results_folder, "03_volcano_plots_gene_changes.pdf"), width = 12, height = 8)
 print(af_volcano_plot)
 print(hf_volcano_plot)
 dev.off()

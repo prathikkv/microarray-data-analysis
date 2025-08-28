@@ -8,11 +8,12 @@ library(ReactomePA)       # Reactome pathway analysis
 library(enrichplot)       # Enhanced plotting for enrichment
 library(DOSE)             # Disease ontology analysis
 library(dplyr)            # Data manipulation
+library(pheatmap)         # Package for heatmaps
+library(reshape2)         # Package for data reshaping
 
 # Set up folders
-analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
-plots_folder <- file.path(analysis_results_folder, "condition_specific_analysis")
-dir.create(plots_folder, showWarnings = FALSE)
+analysis_results_folder <- "results"
+dir.create(analysis_results_folder, showWarnings = FALSE)
 
 print("Loading differential gene expression results...")
 load(file.path(analysis_results_folder, "03_differential_gene_analysis_results.RData"))
@@ -278,10 +279,119 @@ for(gene_set_name in names(hf_processed$gene_lists)) {
   }
 }
 
+print("=== GENERATING COMPREHENSIVE SUMMARY ===")
+
+# Function to summarize pathway results
+summarize_pathway_results <- function(results_list, analysis_type) {
+  
+  summary_data <- data.frame()
+  
+  for(analysis_name in names(results_list)) {
+    result_set <- results_list[[analysis_name]]
+    
+    for(db_name in names(result_set)) {
+      db_result <- result_set[[db_name]]
+      
+      if(!is.null(db_result) && nrow(db_result@result) > 0) {
+        significant_count <- sum(db_result@result$p.adjust < 0.05)
+        
+        summary_row <- data.frame(
+          analysis_name = analysis_name,
+          database = db_name,
+          analysis_type = analysis_type,
+          total_terms = nrow(db_result@result),
+          significant_terms = significant_count,
+          top_term = if(nrow(db_result@result) > 0) db_result@result$Description[1] else "None",
+          top_pvalue = if(nrow(db_result@result) > 0) db_result@result$pvalue[1] else NA,
+          top_qvalue = if(nrow(db_result@result) > 0) db_result@result$p.adjust[1] else NA,
+          stringsAsFactors = FALSE
+        )
+        
+        summary_data <- rbind(summary_data, summary_row)
+      }
+    }
+  }
+  
+  return(summary_data)
+}
+
+# Create comprehensive summaries
+enrichment_summary <- summarize_pathway_results(all_pathway_results, "Enrichment")
+gsea_summary <- summarize_pathway_results(all_gsea_results, "GSEA")
+complete_analysis_summary <- rbind(enrichment_summary, gsea_summary)
+
+# Create gene-level summaries
+print("Creating comprehensive gene summaries...")
+
+# Kinase genes summary
+af_kinase_summary <- data.frame()
+hf_kinase_summary <- data.frame()
+
+if(length(af_processed$kinase_genes_found) > 0) {
+  for(gene in af_processed$kinase_genes_found) {
+    if(gene %in% rownames(atrial_fib_all_gene_results)) {
+      gene_data <- atrial_fib_all_gene_results[gene, ]
+      summary_row <- data.frame(
+        gene = gene,
+        condition = "AF",
+        gene_family = ifelse(gene %in% important_calcium_genes, "CAMK", "Other_Kinase"),
+        fold_change = gene_data$logFC,
+        p_value = gene_data$P.Value,
+        adj_p_value = gene_data$adj.P.Val,
+        avg_expression = gene_data$AveExpr,
+        is_significant_default = (gene_data$adj.P.Val < 0.05) & (abs(gene_data$logFC) > 0.5),
+        is_significant_lenient = (gene_data$adj.P.Val < 0.20) & (abs(gene_data$logFC) > 0.1),
+        stringsAsFactors = FALSE
+      )
+      af_kinase_summary <- rbind(af_kinase_summary, summary_row)
+    }
+  }
+}
+
+if(length(hf_processed$kinase_genes_found) > 0) {
+  for(gene in hf_processed$kinase_genes_found) {
+    if(gene %in% rownames(heart_failure_all_gene_results)) {
+      gene_data <- heart_failure_all_gene_results[gene, ]
+      summary_row <- data.frame(
+        gene = gene,
+        condition = "HF",
+        gene_family = ifelse(gene %in% important_calcium_genes, "CAMK", "Other_Kinase"),
+        fold_change = gene_data$logFC,
+        p_value = gene_data$P.Value,
+        adj_p_value = gene_data$adj.P.Val,
+        avg_expression = gene_data$AveExpr,
+        is_significant_default = (gene_data$adj.P.Val < 0.05) & (abs(gene_data$logFC) > 0.5),
+        is_significant_lenient = (gene_data$adj.P.Val < 0.20) & (abs(gene_data$logFC) > 0.1),
+        stringsAsFactors = FALSE
+      )
+      hf_kinase_summary <- rbind(hf_kinase_summary, summary_row)
+    }
+  }
+}
+
+all_kinase_summary <- rbind(af_kinase_summary, hf_kinase_summary)
+
+# Analysis overview summary
+analysis_overview <- data.frame(
+  condition = c("AF", "HF"),
+  total_genes_analyzed = c(nrow(atrial_fib_all_gene_results), nrow(heart_failure_all_gene_results)),
+  kinase_genes_found = c(length(af_processed$kinase_genes_found), length(hf_processed$kinase_genes_found)),
+  camk_genes_found = c(length(af_processed$camk_genes_found), length(hf_processed$camk_genes_found)),
+  significant_genes_default = c(
+    nrow(atrial_fib_all_gene_results[atrial_fib_all_gene_results$adj.P.Val < 0.05 & abs(atrial_fib_all_gene_results$logFC) > 0.5, ]),
+    nrow(heart_failure_all_gene_results[heart_failure_all_gene_results$adj.P.Val < 0.05 & abs(heart_failure_all_gene_results$logFC) > 0.5, ])
+  ),
+  significant_genes_lenient = c(
+    nrow(atrial_fib_all_gene_results[atrial_fib_all_gene_results$adj.P.Val < 0.20 & abs(atrial_fib_all_gene_results$logFC) > 0.1, ]),
+    nrow(heart_failure_all_gene_results[heart_failure_all_gene_results$adj.P.Val < 0.20 & abs(heart_failure_all_gene_results$logFC) > 0.1, ])
+  ),
+  stringsAsFactors = FALSE
+)
+
 print("=== CREATING COMPREHENSIVE VISUALIZATION ===")
 
 # Create comprehensive pathway visualization
-pdf(file.path(plots_folder, "05_comprehensive_pathway_analysis.pdf"), width = 16, height = 12)
+pdf(file.path(analysis_results_folder, "05_comprehensive_pathway_analysis.pdf"), width = 16, height = 12)
 
 print("Creating hierarchical gene analysis visualization...")
 
@@ -439,115 +549,6 @@ print("- CAMK gene expression comparison")
 print("- Pathway enrichment summary across databases")
 print("- Gene statistical significance visualization")
 print("")
-
-print("=== GENERATING COMPREHENSIVE SUMMARY ===")
-
-# Function to summarize pathway results
-summarize_pathway_results <- function(results_list, analysis_type) {
-  
-  summary_data <- data.frame()
-  
-  for(analysis_name in names(results_list)) {
-    result_set <- results_list[[analysis_name]]
-    
-    for(db_name in names(result_set)) {
-      db_result <- result_set[[db_name]]
-      
-      if(!is.null(db_result) && nrow(db_result@result) > 0) {
-        significant_count <- sum(db_result@result$p.adjust < 0.05)
-        
-        summary_row <- data.frame(
-          analysis_name = analysis_name,
-          database = db_name,
-          analysis_type = analysis_type,
-          total_terms = nrow(db_result@result),
-          significant_terms = significant_count,
-          top_term = if(nrow(db_result@result) > 0) db_result@result$Description[1] else "None",
-          top_pvalue = if(nrow(db_result@result) > 0) db_result@result$pvalue[1] else NA,
-          top_qvalue = if(nrow(db_result@result) > 0) db_result@result$p.adjust[1] else NA,
-          stringsAsFactors = FALSE
-        )
-        
-        summary_data <- rbind(summary_data, summary_row)
-      }
-    }
-  }
-  
-  return(summary_data)
-}
-
-# Create comprehensive summaries
-enrichment_summary <- summarize_pathway_results(all_pathway_results, "Enrichment")
-gsea_summary <- summarize_pathway_results(all_gsea_results, "GSEA")
-complete_analysis_summary <- rbind(enrichment_summary, gsea_summary)
-
-# Create gene-level summaries
-print("Creating comprehensive gene summaries...")
-
-# Kinase genes summary
-af_kinase_summary <- data.frame()
-hf_kinase_summary <- data.frame()
-
-if(length(af_processed$kinase_genes_found) > 0) {
-  for(gene in af_processed$kinase_genes_found) {
-    if(gene %in% rownames(atrial_fib_all_gene_results)) {
-      gene_data <- atrial_fib_all_gene_results[gene, ]
-      summary_row <- data.frame(
-        gene = gene,
-        condition = "AF",
-        gene_family = ifelse(gene %in% important_calcium_genes, "CAMK", "Other_Kinase"),
-        fold_change = gene_data$logFC,
-        p_value = gene_data$P.Value,
-        adj_p_value = gene_data$adj.P.Val,
-        avg_expression = gene_data$AveExpr,
-        is_significant_default = (gene_data$adj.P.Val < 0.05) & (abs(gene_data$logFC) > 0.5),
-        is_significant_lenient = (gene_data$adj.P.Val < 0.20) & (abs(gene_data$logFC) > 0.1),
-        stringsAsFactors = FALSE
-      )
-      af_kinase_summary <- rbind(af_kinase_summary, summary_row)
-    }
-  }
-}
-
-if(length(hf_processed$kinase_genes_found) > 0) {
-  for(gene in hf_processed$kinase_genes_found) {
-    if(gene %in% rownames(heart_failure_all_gene_results)) {
-      gene_data <- heart_failure_all_gene_results[gene, ]
-      summary_row <- data.frame(
-        gene = gene,
-        condition = "HF",
-        gene_family = ifelse(gene %in% important_calcium_genes, "CAMK", "Other_Kinase"),
-        fold_change = gene_data$logFC,
-        p_value = gene_data$P.Value,
-        adj_p_value = gene_data$adj.P.Val,
-        avg_expression = gene_data$AveExpr,
-        is_significant_default = (gene_data$adj.P.Val < 0.05) & (abs(gene_data$logFC) > 0.5),
-        is_significant_lenient = (gene_data$adj.P.Val < 0.20) & (abs(gene_data$logFC) > 0.1),
-        stringsAsFactors = FALSE
-      )
-      hf_kinase_summary <- rbind(hf_kinase_summary, summary_row)
-    }
-  }
-}
-
-all_kinase_summary <- rbind(af_kinase_summary, hf_kinase_summary)
-
-# Analysis overview summary
-analysis_overview <- data.frame(
-  condition = c("AF", "HF"),
-  total_genes_analyzed = c(nrow(atrial_fib_all_gene_results), nrow(heart_failure_all_gene_results)),
-  kinase_genes_found = c(length(af_processed$kinase_genes_found), length(hf_processed$kinase_genes_found)),
-  camk_genes_found = c(length(af_processed$camk_genes_found), length(hf_processed$camk_genes_found)),
-  significant_genes_default = c(
-    nrow(atrial_fib_all_gene_results[atrial_fib_all_gene_results$adj.P.Val < 0.05 & abs(atrial_fib_all_gene_results$logFC) > 0.5, ]),
-    nrow(heart_failure_all_gene_results[heart_failure_all_gene_results$adj.P.Val < 0.05 & abs(heart_failure_all_gene_results$logFC) > 0.5, ])
-  ),
-  significant_genes_lenient = c(
-    nrow(atrial_fib_all_gene_results[atrial_fib_all_gene_results$adj.P.Val < 0.20 & abs(atrial_fib_all_gene_results$logFC) > 0.1, ]),
-    nrow(heart_failure_all_gene_results[heart_failure_all_gene_results$adj.P.Val < 0.20 & abs(heart_failure_all_gene_results$logFC) > 0.1, ])
-  ),
-  stringsAsFactors = FALSE
-)
 
 print("=== SAVING COMPREHENSIVE RESULTS ===")
 

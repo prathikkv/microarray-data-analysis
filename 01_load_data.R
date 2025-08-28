@@ -10,12 +10,9 @@ library(RColorBrewer)   # Package for color palettes
 
 # Set up our folder paths
 main_data_folder <- "/Users/macbookpro/Desktop/Ananylum/data"
-analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
-plots_folder <- file.path(analysis_results_folder, "data_loading_quality_control")
-
+analysis_results_folder <- "results"
 # Make sure folders exist
 dir.create(analysis_results_folder, showWarnings = FALSE)
-dir.create(plots_folder, showWarnings = FALSE)
 
 print("Loading cardiac datasets from downloaded files...")
 
@@ -351,7 +348,7 @@ print("")
 print("Creating comprehensive quality control and visualization plots...")
 
 # Create comprehensive plots for data loading QC
-pdf(file.path(plots_folder, "01_data_loading_quality_control.pdf"), width = 14, height = 10)
+pdf(file.path(analysis_results_folder, "01_data_loading_quality_control.pdf"), width = 14, height = 10)
 
 # 1. Probe mapping summary bar plot
 probe_mapping_data <- data.frame(
@@ -493,7 +490,7 @@ print(important_genes_heatmap)
 dev.off()
 
 print("Quality control plots saved successfully!")
-print(paste("- Saved to:", file.path(plots_folder, "01_data_loading_quality_control.pdf")))
+print(paste("- Saved to:", file.path(analysis_results_folder, "01_data_loading_quality_control.pdf")))
 print("")
 
 print("VISUALIZATION SUMMARY:")

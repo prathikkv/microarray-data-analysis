@@ -9,9 +9,8 @@ library(gridExtra)  # Package to arrange multiple plots
 library(cluster)    # Package for clustering analysis
 
 # Set up our folders
-analysis_results_folder <- "/Users/macbookpro/Desktop/Ananylum/new_meta_analysis/results"
-plots_folder <- file.path(analysis_results_folder, "condition_specific_analysis")
-dir.create(plots_folder, showWarnings = FALSE)
+analysis_results_folder <- "results"
+dir.create(analysis_results_folder, showWarnings = FALSE)
 
 # Load the combined dataset we created in step 1
 load(file.path(analysis_results_folder, "01_combined_4datasets.RData"))
@@ -259,12 +258,12 @@ create_batch_correction_plots <- function(original_data, corrected_data, sample_
 # Create plots and get variance information
 atrial_fib_variance_info <- create_batch_correction_plots(
   atrial_fib_expression_clean, atrial_fib_corrected_expression, atrial_fib_sample_info, atrial_fib_batch_labels, "AF",
-  file.path(plots_folder, "AF_batch_correction_report.pdf")
+  file.path(analysis_results_folder, "AF_batch_correction_report.pdf")
 )
 
 heart_failure_variance_info <- create_batch_correction_plots(
   heart_failure_expression_clean, heart_failure_corrected_expression, heart_failure_sample_info, heart_failure_batch_labels, "HF",
-  file.path(plots_folder, "HF_batch_correction_report.pdf")
+  file.path(analysis_results_folder, "HF_batch_correction_report.pdf")
 )
 
 # Combine variance information
